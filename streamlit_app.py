@@ -83,31 +83,6 @@ if uploaded_file:
         if performance_chart:
             st.plotly_chart(performance_chart)
 
-        # Histogram for Fund Returns Distribution
-        st.subheader("Fund Returns Distribution")
-        if "Fund Return" in performance_data.columns:
-            return_data = performance_data["Fund Return"].astype(float, errors='ignore')
-            fig, ax = plt.subplots()
-            ax.hist(return_data, bins=20, alpha=0.7, color="blue")
-            ax.set_title("Fund Return Distribution")
-            ax.set_xlabel("Return")
-            ax.set_ylabel("Frequency")
-            st.pyplot(fig)
-
-        # Boxplot for Fund Returns
-        st.subheader("Fund Return Boxplot")
-        if "Fund Return" in performance_data.columns:
-            fig, ax = plt.subplots()
-            ax.boxplot(return_data)
-            ax.set_title("Fund Return Boxplot")
-            ax.set_ylabel("Return")
-            st.pyplot(fig)
-
-        # Rolling Average of Fund Returns
-        st.subheader("Rolling Average of Fund Returns")
-        rolling_avg = performance_data["Fund Return"].astype(float).rolling(window=12).mean()
-        st.line_chart(rolling_avg)
-
     # Asset Allocation Visualization (if data exists)
     if "Asset Allocation" in data:
         st.header("Asset Allocation")
