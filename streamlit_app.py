@@ -3,6 +3,8 @@ import pandas as pd
 from fpdf import FPDF
 import os
 import plotly.express as px
+import matplotlib.pyplot as plt
+from io import BytesIO
 
 # Function to generate a PDF factsheet dynamically
 def generate_factsheet(data, output_file):
@@ -32,6 +34,9 @@ def generate_factsheet(data, output_file):
                 for cell in row:
                     self.cell(40, 10, cell, 1, 0, 'C')
                 self.ln()
+
+        def add_image(self, image_path, x, y, w, h):
+            self.image(image_path, x, y, w, h)
 
     pdf = PDF()
     pdf.add_page()
@@ -66,6 +71,24 @@ def generate_factsheet(data, output_file):
         headers = list(risk_data.columns)
         rows = risk_data.values.tolist()
         pdf.add_table(headers, rows)
+
+    # Generate and embed visualizations as images
+    if "Visualizations" in data:
+        pdf.chapter_title("Visualizations")
+
+        # Generate Bar Chart Example
+        if "bar_chart" in data["Visualizations"]:
+            bar_chart = data["Visualizations"]["bar_chart"]
+            bar_chart_img_path = "bar_chart.png"
+            bar_chart.write_image(bar_chart_img_path)
+            pdf.add_image(bar_chart_img_path, x=10, y=pdf.get_y(), w=180, h=120)
+
+        # Generate Pie Chart Example
+        if "pie_chart" in data["Visualizations"]:
+            pie_chart = data["Visualizations"]["pie_chart"]
+            pie_chart_img_path = "pie_chart.png"
+            pie_chart.write_image(pie_chart_img_path)
+            pdf.add_image(pie_chart_img_path, x=10, y=pdf.get_y(), w=180, h=120)
 
     # Save the PDF
     pdf.output(output_file)
@@ -139,7 +162,8 @@ if uploaded_file:
         if x_axis and y_axis:
             st.subheader(f"{y_axis} vs {x_axis} (Bar Chart)")
             bar_chart_data = sheet_data.groupby(x_axis)[y_axis].sum().reset_index()
-            st.bar_chart(bar_chart_data.set_index(x_axis))
+            bar_chart = px.bar(bar_chart_data, x=x_axis, y=y_axis, title=f"{y_axis} vs {x_axis}")
+            data.setdefault("Visualizations", {})["bar_chart"] = bar_chart
 
         # Create Pie Chart Visualization
         if len(numeric_columns) >= 1 and len(categorical_columns) >= 1:
@@ -149,8 +173,8 @@ if uploaded_file:
 
             if pie_column and pie_value:
                 pie_data = sheet_data.groupby(pie_column)[pie_value].sum().reset_index()
-                fig = px.pie(pie_data, names=pie_column, values=pie_value, title=f"{pie_value} Distribution by {pie_column}")
-                st.plotly_chart(fig)
+                pie_chart = px.pie(pie_data, names=pie_column, values=pie_value, title=f"{pie_value} Distribution by {pie_column}")
+                data["Visualizations"]["pie_chart"] = pie_chart
 
         # Create Line Chart for Performance Metrics if applicable
         if 'Performance Metrics' in selected_sheets and len(numeric_columns) > 1:
