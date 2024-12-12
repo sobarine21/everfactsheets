@@ -78,28 +78,26 @@ if uploaded_file:
         
         # Extract data from each selected sheet
         for sheet in selected_sheets:
-            sheet_data = pd.read_excel(uploaded_file, sheet_name=sheet, header=None)
-            
-            # Inspect the number of columns before renaming
-            print(f"Columns in {sheet}: {sheet_data.columns}")
-            
-            # Check if the sheet has the expected structure (2 columns)
-            if sheet_data.shape[1] == 2:
-                sheet_data.columns = ['Data Point', 'Value']  # Set columns to expected format
-            else:
-                # Print the first few rows to debug the column issue
-                print(f"Sheet '{sheet}' has unexpected number of columns. Data preview:\n", sheet_data.head())
-                continue  # Skip this sheet or handle it differently
-            
+            sheet_data = pd.read_excel(uploaded_file, sheet_name=sheet)
+
+            # Handle Fund Details tab: Process rows for each fund
             if sheet == 'Fund Details':
-                fund_details = sheet_data.set_index('Data Point').to_dict()['Value']
+                fund_details = sheet_data.set_index('Fund Name').T.to_dict('dict')
                 data['Fund Details'] = fund_details
+            
+            # Handle Portfolio Holdings tab: Table format
             elif sheet == 'Portfolio Holdings':
                 data[sheet] = sheet_data
+
+            # Handle Performance Metrics tab: Table format
             elif sheet == 'Performance Metrics':
                 data[sheet] = sheet_data
+
+            # Handle Risk Metrics tab: Table format
             elif sheet == 'Risk Metrics':
                 data[sheet] = sheet_data
+
+            # Handle Performance tab: Table format
             elif sheet == 'Performance':
                 data[sheet] = sheet_data
 
