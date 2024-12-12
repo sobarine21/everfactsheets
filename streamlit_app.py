@@ -1,7 +1,15 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 from fpdf import FPDF
+import matplotlib.pyplot as plt
+
+# Function to generate a pie chart for sector breakdown
+def generate_sector_chart(data, output_path):
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.pie(data['Percentage'], labels=data['Sector'], autopct='%1.1f%%', startangle=140)
+    plt.title("Sector Breakdown")
+    plt.savefig(output_path)
+    plt.close()
 
 # Function to generate a factsheet PDF
 def generate_factsheet(data, output_file):
@@ -16,7 +24,7 @@ def generate_factsheet(data, output_file):
     pdf.set_font("Arial", style="B", size=14)
     pdf.cell(0, 10, "Investment Objective", ln=True)
     pdf.set_font("Arial", size=12)
-    pdf.multi_cell(0, 10, data['investment_objective'], ln=True)
+    pdf.multi_cell(0, 10, data['investment_objective'])  # Removed `ln=True`
     pdf.ln(5)
 
     # Add Top Holdings
@@ -43,67 +51,52 @@ def generate_factsheet(data, output_file):
     pdf.set_font("Arial", style="B", size=14)
     pdf.cell(0, 10, "Disclosures", ln=True)
     pdf.set_font("Arial", size=12)
-    pdf.multi_cell(0, 10, data['disclosures'], ln=True)
+    pdf.multi_cell(0, 10, data['disclosures'])  # Removed `ln=True`
 
     pdf.output(output_file)
 
-# Streamlit App
-st.title("VC/PE Fund Factsheet Generator")
+# Streamlit application
+def main():
+    st.title("VC/PE Fund Factsheet Generator")
+    st.write("Upload your Excel file with all required data points to generate a factsheet.")
 
-# File Upload
-uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
+    # File upload
+    uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
+    
+    if uploaded_file:
+        # Load Excel file
+        excel_data = pd.ExcelFile(uploaded_file)
+        
+        # Load different tabs
+        investment_objective = excel_data.parse('Investment Objective')
+        top_holdings = excel_data.parse('Top Holdings')
+        sector_breakdown = excel_data.parse('Sector Breakdown')
+        disclosures = excel_data.parse('Disclosures')
 
-if uploaded_file:
-    # Read Excel File
-    data_excel = pd.ExcelFile(uploaded_file)
-
-    # Load data from specific tabs
-    investment_objective = data_excel.parse("Investment Objective").iloc[0, 0]
-    top_holdings = data_excel.parse("Top Holdings")
-    sector_breakdown = data_excel.parse("Sector Breakdown")
-    disclosures = data_excel.parse("Disclosures").iloc[0, 0]
-
-    # Preview Data
-    st.subheader("Investment Objective")
-    st.write(investment_objective)
-
-    st.subheader("Top Holdings")
-    st.dataframe(top_holdings)
-
-    st.subheader("Sector Breakdown")
-    st.dataframe(sector_breakdown)
-
-    # Generate Sector Breakdown Pie Chart
-    st.subheader("Sector Breakdown Chart")
-    fig, ax = plt.subplots()
-    ax.pie(
-        sector_breakdown["Percentage"],
-        labels=sector_breakdown["Sector"],
-        autopct="%1.1f%%",
-        startangle=90,
-    )
-    ax.axis("equal")  # Equal aspect ratio ensures that pie is drawn as a circle.
-    st.pyplot(fig)
-
-    # Save chart as image
-    chart_path = "sector_chart.png"
-    fig.savefig(chart_path)
-
-    # Generate Factsheet
-    if st.button("Generate Factsheet"):
+        # Extract data for the factsheet
         data = {
-            "investment_objective": investment_objective,
-            "top_holdings": top_holdings,
-            "sector_chart": chart_path,
-            "disclosures": disclosures,
+            'investment_objective': investment_objective.iloc[0, 0],
+            'top_holdings': top_holdings,
+            'sector_breakdown': sector_breakdown,
+            'disclosures': disclosures.iloc[0, 0],
+            'sector_chart': "sector_chart.png"
         }
-        output_file = "VC_PE_Factsheet.pdf"
+
+        # Generate sector breakdown chart
+        generate_sector_chart(sector_breakdown, data['sector_chart'])
+
+        # Generate the factsheet
+        output_file = "factsheet.pdf"
         generate_factsheet(data, output_file)
-        st.success(f"Factsheet generated: {output_file}")
+
+        # Provide download link
         with open(output_file, "rb") as file:
             st.download_button(
-                label="Download Factsheet",
+                label="Download Factsheet PDF",
                 data=file,
-                file_name=output_file,
+                file_name="factsheet.pdf",
                 mime="application/pdf",
             )
+
+if __name__ == "__main__":
+    main()
