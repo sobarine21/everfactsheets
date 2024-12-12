@@ -8,8 +8,8 @@ import os
 def generate_factsheet(data, output_file):
     class PDF(FPDF):
         def header(self):
-            self.set_font('Arial', 'B', 14)
-            self.cell(0, 10, 'Fund Factsheet', border=False, ln=True, align='C')
+            self.set_font('Arial', 'B', 16)
+            self.cell(0, 10, 'Fund Factsheet', 0, 1, 'C')
             self.ln(10)
 
         def chapter_title(self, title):
@@ -22,10 +22,11 @@ def generate_factsheet(data, output_file):
             self.multi_cell(0, 10, body)
             self.ln()
 
-        def add_table(self, headers, rows):
+        def add_table(self, headers, rows, col_widths=None):
             self.set_font('Arial', 'B', 10)
-            col_widths = [40 for _ in headers]  # equal width for all columns
-
+            if not col_widths:
+                col_widths = [40] * len(headers)  # Equal column width by default
+            
             # Header Row
             for header, width in zip(headers, col_widths):
                 self.cell(width, 10, header, 1, 0, 'C')
@@ -42,10 +43,15 @@ def generate_factsheet(data, output_file):
             self.image(image_path, x=10, y=self.get_y(), w=190)
             self.ln(65)
 
+        def footer(self):
+            self.set_y(-15)
+            self.set_font('Arial', 'I', 8)
+            self.cell(0, 10, 'Legal Disclaimer: Past performance is not indicative of future results.', 0, 0, 'C')
+
     pdf = PDF()
     pdf.add_page()
 
-    # Dynamically add sections from the data
+    # Dynamic data for fund factsheet
     for section, content in data.items():
         if isinstance(content, dict):
             pdf.chapter_title(section)
@@ -66,7 +72,7 @@ def generate_factsheet(data, output_file):
             pdf.chapter_title(section)
             pdf.chapter_body(content)
 
-    # Save the PDF
+    pdf.footer()
     pdf.output(output_file)
 
 # Streamlit application
