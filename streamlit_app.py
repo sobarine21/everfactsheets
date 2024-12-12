@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
-from fpdf import FPDF
 import matplotlib.pyplot as plt
+from fpdf import FPDF
+import seaborn as sns
 import os
 
 # Function to generate a PDF factsheet dynamically
@@ -24,15 +25,11 @@ def generate_factsheet(data, output_file):
 
         def add_table(self, headers, rows):
             self.set_font('Arial', 'B', 10)
-            # Convert header items to string
-            headers = [str(header) for header in headers]
             for header in headers:
                 self.cell(40, 10, header, 1, 0, 'C')
             self.ln()
             self.set_font('Arial', '', 10)
-            # Convert each row value to string
             for row in rows:
-                row = [str(cell) for cell in row]  # Convert each cell to string
                 for cell in row:
                     self.cell(40, 10, cell, 1, 0, 'C')
                 self.ln()
@@ -44,26 +41,41 @@ def generate_factsheet(data, output_file):
     pdf = PDF()
     pdf.add_page()
 
-    # Dynamically add sections from the data
-    for section, content in data.items():
-        if isinstance(content, dict):
-            pdf.chapter_title(section)
-            for sub_section, sub_content in content.items():
-                if isinstance(sub_content, pd.DataFrame):
-                    pdf.chapter_title(sub_section)
-                    headers = list(sub_content.columns)
-                    rows = sub_content.values.tolist()
-                    pdf.add_table(headers, rows)
-                else:
-                    pdf.chapter_body(f"{sub_section}: {sub_content}")
-        elif isinstance(content, pd.DataFrame):
-            pdf.chapter_title(section)
-            headers = list(content.columns)
-            rows = content.values.tolist()
-            pdf.add_table(headers, rows)
-        elif isinstance(content, str):
-            pdf.chapter_title(section)
-            pdf.chapter_body(content)
+    # Add fund details section
+    if "Fund Details" in data:
+        pdf.chapter_title('Fund Details')
+        fund_details = data["Fund Details"]
+        for sub_section, sub_content in fund_details.items():
+            pdf.chapter_body(f"{sub_section}: {sub_content}")
+
+    # Add portfolio holdings section
+    if "Portfolio Holdings" in data:
+        pdf.chapter_title('Portfolio Holdings')
+        portfolio_data = data["Portfolio Holdings"]
+        headers = list(portfolio_data.columns)
+        rows = portfolio_data.values.tolist()
+        pdf.add_table(headers, rows)
+
+    # Add performance metrics section
+    if "Performance Metrics" in data:
+        pdf.chapter_title('Performance Metrics')
+        performance_data = data["Performance Metrics"]
+        headers = list(performance_data.columns)
+        rows = performance_data.values.tolist()
+        pdf.add_table(headers, rows)
+
+    # Add risk metrics section
+    if "Risk Metrics" in data:
+        pdf.chapter_title('Risk Metrics')
+        risk_data = data["Risk Metrics"]
+        headers = list(risk_data.columns)
+        rows = risk_data.values.tolist()
+        pdf.add_table(headers, rows)
+
+    # Add graphs to the PDF
+    if "Graphs" in data:
+        for graph in data["Graphs"]:
+            pdf.add_graph(graph)
 
     # Save the PDF
     pdf.output(output_file)
@@ -121,36 +133,70 @@ if uploaded_file:
             with open(output_file, "rb") as pdf_file:
                 st.download_button(label="Download Factsheet", data=pdf_file, file_name=output_file, mime="application/pdf")
 
-# Dynamic plotting for visualization
-if uploaded_file:
-    st.header("Data Visualization")
-    sheet_name = st.selectbox("Select a sheet for visualization", sheets)
-    sheet_data = pd.read_excel(uploaded_file, sheet_name=sheet_name)
+        # Dynamic plotting for visualization
+        st.header("Data Visualization")
+        sheet_name = st.selectbox("Select a sheet for visualization", selected_sheets)
+        sheet_data = pd.read_excel(uploaded_file, sheet_name=sheet_name)
 
-    st.dataframe(sheet_data)
+        st.dataframe(sheet_data)
 
-    numeric_columns = sheet_data.select_dtypes(include=['float64', 'int64']).columns
-    categorical_columns = sheet_data.select_dtypes(include=['object']).columns
+        numeric_columns = sheet_data.select_dtypes(include=['float64', 'int64']).columns
+        categorical_columns = sheet_data.select_dtypes(include=['object']).columns
 
-    x_axis = st.selectbox("Select X-Axis", categorical_columns)
-    y_axis = st.selectbox("Select Y-Axis", numeric_columns)
+        x_axis = st.selectbox("Select X-Axis", categorical_columns)
+        y_axis = st.selectbox("Select Y-Axis", numeric_columns)
 
-    if x_axis and y_axis:
-        plt.figure(figsize=(10, 6))
-        plt.bar(sheet_data[x_axis], sheet_data[y_axis])
-        plt.xlabel(x_axis)
-        plt.ylabel(y_axis)
-        plt.title(f"{y_axis} vs {x_axis}")
-        plt.xticks(rotation=45)
-        plt.tight_layout()
+        if x_axis and y_axis:
+            plt.figure(figsize=(10, 6))
+            plt.bar(sheet_data[x_axis], sheet_data[y_axis])
+            plt.xlabel(x_axis)
+            plt.ylabel(y_axis)
+            plt.title(f"{y_axis} vs {x_axis}")
+            plt.xticks(rotation=45)
+            plt.tight_layout()
 
-        graph_path = "graph.png"
-        plt.savefig(graph_path)
-        st.pyplot(plt)
+            graph_path = "graph.png"
+            plt.savefig(graph_path)
+            st.pyplot(plt)
 
-        if st.button("Add Graph to Factsheet"):
-            output_file = "dynamic_factsheet_with_graph.pdf"
-            generate_factsheet({"Graph": graph_path}, output_file)
+            # Add Graph to PDF
+            if st.button("Add Graph to Factsheet"):
+                if "Graphs" not in data:
+                    data["Graphs"] = []
+                data["Graphs"].append(graph_path)
 
-            with open(output_file, "rb") as pdf_file:
-                st.download_button(label="Download Factsheet with Graph", data=pdf_file, file_name=output_file, mime="application/pdf")
+                output_file_with_graph = "dynamic_factsheet_with_graph.pdf"
+                generate_factsheet(data, output_file_with_graph)
+
+                with open(output_file_with_graph, "rb") as pdf_file:
+                    st.download_button(label="Download Factsheet with Graph", data=pdf_file, file_name=output_file_with_graph, mime="application/pdf")
+
+        # Create Pie Chart Visualization
+        if len(numeric_columns) >= 1 and len(categorical_columns) >= 1:
+            st.subheader("Pie Chart Visualization")
+            pie_column = st.selectbox("Select Category for Pie Chart", categorical_columns)
+            pie_value = st.selectbox("Select Value Column", numeric_columns)
+
+            if pie_column and pie_value:
+                pie_data = sheet_data.groupby(pie_column)[pie_value].sum()
+                plt.figure(figsize=(8, 6))
+                pie_data.plot(kind='pie', autopct='%1.1f%%', startangle=90)
+                plt.title(f"{pie_value} Distribution by {pie_column}")
+                plt.ylabel('')
+                plt.tight_layout()
+
+                pie_chart_path = "pie_chart.png"
+                plt.savefig(pie_chart_path)
+                st.pyplot(plt)
+
+                # Add Pie Chart to PDF
+                if st.button("Add Pie Chart to Factsheet"):
+                    if "Graphs" not in data:
+                        data["Graphs"] = []
+                    data["Graphs"].append(pie_chart_path)
+
+                    output_file_with_pie = "dynamic_factsheet_with_pie.pdf"
+                    generate_factsheet(data, output_file_with_pie)
+
+                    with open(output_file_with_pie, "rb") as pdf_file:
+                        st.download_button(label="Download Factsheet with Pie Chart", data=pdf_file, file_name=output_file_with_pie, mime="application/pdf")
