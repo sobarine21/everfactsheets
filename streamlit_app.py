@@ -6,10 +6,6 @@ import numpy as np
 import io
 import google.generativeai as genai
 
-# Configure the API key securely from Streamlit's secrets
-# Make sure to add GOOGLE_API_KEY in secrets.toml (for local) or Streamlit Cloud Secrets
-genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-
 # Function to generate line chart for performance comparison (Fund vs Benchmark)
 def generate_line_chart(data, columns, title):
     # Ensure the columns in 'y' exist in the dataframe
@@ -56,7 +52,17 @@ def generate_bar_chart(data, column, top_n, title):
     fig = px.bar(top_assets, x=top_assets.index, y=top_assets.values, title=title)
     st.plotly_chart(fig)
 
-# Function to generate template
+# Configure the API key securely from Streamlit's secrets
+# Make sure to add GOOGLE_API_KEY in secrets.toml (for local) or Streamlit Cloud Secrets
+genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+
+# Streamlit App
+st.title('Dynamic Fund Visualization Dashboard')
+
+# File uploader to upload the Excel file
+uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
+
+# Option to download a template Excel file
 def generate_template():
     # Create a template DataFrame
     fund_details = pd.DataFrame({
@@ -115,12 +121,6 @@ def generate_template():
         template_file = f.read()
     
     return template_file
-
-# Streamlit App
-st.title('Dynamic Fund Visualization Dashboard')
-
-# File uploader to upload the Excel file
-uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
 # Download button for the template
 if st.sidebar.button("Download Data Template"):
@@ -259,23 +259,20 @@ if uploaded_file:
         future_value = initial_investment * (1 + growth_rate / 100) ** years
         st.write(f"Estimated Future Value: ${future_value:,.2f}")
 
-# Gemini AI Section for Fund Analysis
-st.title("AI Fund Analysis with Gemini")
-
-# Prompt input field
-prompt = st.text_input("Enter your fund analysis prompt:", "Best strategies for improving this fund's performance")
-
-# Button to generate response
-if st.button("Generate Response from Gemini"):
-    try:
-        # Load and configure the model
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        # Generate response from the model
-        response = model.generate_content(prompt)
-        
-        # Display response in Streamlit
-        st.write("AI Response:")
-        st.write(response.text)
-    except Exception as e:
-        st.error(f"Error: {e}")
+    # Add Gemini AI feature to generate a summary and factsheet
+    st.sidebar.header("Gemini AI: Fund Summary")
+    prompt = st.text_input("Enter a request to generate a fund summary or factsheet", "Provide a summary of the fund and its key metrics.")
+    
+    if st.sidebar.button("Generate Fund Summary"):
+        try:
+            # Load and configure the model
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # Generate response from the model
+            response = model.generate_content(prompt)
+            
+            # Display response in Streamlit
+            st.header("AI Generated Fund Summary")
+            st.write(response.text)
+        except Exception as e:
+            st.error(f"Error: {e}")
