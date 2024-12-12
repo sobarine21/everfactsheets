@@ -30,7 +30,7 @@ def generate_factsheet(data, output_file):
             self.set_font('Arial', '', 10)
             for row in rows:
                 for cell in row:
-                    self.cell(40, 10, str(cell), 1, 0, 'C')
+                    self.cell(40, 10, str(cell), 1, 0, 'C')  # Convert cell value to string
                 self.ln()
 
         def add_graph(self, image_path):
@@ -79,6 +79,9 @@ if uploaded_file:
         # Extract data from each selected sheet
         for sheet in selected_sheets:
             sheet_data = pd.read_excel(uploaded_file, sheet_name=sheet)
+
+            # Convert all values to strings to handle Timestamps properly
+            sheet_data = sheet_data.applymap(str)
 
             # Handle Fund Details tab: Process rows for each fund
             if sheet == 'Fund Details':
