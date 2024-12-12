@@ -80,13 +80,12 @@ if uploaded_file:
         for sheet in selected_sheets:
             sheet_data = pd.read_excel(uploaded_file, sheet_name=sheet)
 
-            # Ensure all date columns are converted to string
+            # Convert all datetime columns to string
             for column in sheet_data.columns:
-                # Check if the column contains datetime values, then convert to string
                 if sheet_data[column].dtype == 'datetime64[ns]':
                     sheet_data[column] = sheet_data[column].astype(str)
-            
-            # Apply str conversion to all other columns
+
+            # Apply str conversion to all other columns to avoid Timestamp issues
             sheet_data = sheet_data.applymap(str)
 
             # Handle Fund Details tab: Process rows for each fund
