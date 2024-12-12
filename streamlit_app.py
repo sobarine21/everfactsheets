@@ -161,7 +161,7 @@ if uploaded_file:
         st.dataframe(performance_data)
 
         # Line Chart for Fund vs Benchmark performance
-        performance_chart = generate_line_chart(performance_data, ["Fund Return", "Benchmark Return"], "Performance Comparison")
+        performance_chart = generate_line_chart(performance_data, ["Fund Return (%)", "Benchmark Return (%)"], "Performance Comparison")
         if performance_chart:
             st.plotly_chart(performance_chart)
 
@@ -185,9 +185,13 @@ if uploaded_file:
     if "Performance Over Time" in data:
         st.header("Performance Over Time")
         performance_over_time = data["Performance Over Time"]
-        performance_time_chart = generate_line_chart(performance_over_time, ["Fund Return", "Benchmark Return"], "Performance Over Time")
-        if performance_time_chart:
-            st.plotly_chart(performance_time_chart)
+
+        # Check if "Fund Return (%)" exists before processing
+        if "Fund Return (%)" in performance_over_time.columns:
+            performance_over_time["Cumulative Fund Return"] = (1 + performance_over_time["Fund Return (%)"].astype(float) / 100).cumprod() - 1
+            st.line_chart(performance_over_time["Cumulative Fund Return"])
+        else:
+            st.warning("'Fund Return (%)' column is missing in Performance Over Time data.")
 
     # Correlation heatmap for performance metrics
     if "Performance Metrics" in data:
@@ -203,13 +207,6 @@ if uploaded_file:
         fig = px.pie(sector_alloc, names=sector_alloc.index, values=sector_alloc.values, title="Sector Allocation")
         st.plotly_chart(fig)
 
-    # Cumulative Returns Over Time
-    if "Performance Over Time" in data:
-        st.header("Cumulative Fund Return Over Time")
-        performance_over_time = data["Performance Over Time"]
-        performance_over_time["Cumulative Fund Return"] = (1 + performance_over_time["Fund Return"].astype(float) / 100).cumprod() - 1
-        st.line_chart(performance_over_time["Cumulative Fund Return"])
-
     # Risk Metrics Visualization
     if "Risk Metrics" in data:
         st.header("Risk Metrics")
@@ -218,13 +215,13 @@ if uploaded_file:
 
         # Volatility chart
         st.subheader("Volatility Over Time")
-        if "Volatility" in risk_data.columns:
-            st.line_chart(risk_data["Volatility"])
+        if "Volatility (%)" in risk_data.columns:
+            st.line_chart(risk_data["Volatility (%)"])
 
         # Value at Risk (VaR) histogram
         st.subheader("Value at Risk (VaR) Histogram")
-        if "VaR" in risk_data.columns:
-            var_data = risk_data["VaR"].astype(float)
+        if "VaR (%)" in risk_data.columns:
+            var_data = risk_data["VaR (%)"].astype(float)
             fig, ax = plt.subplots()
             ax.hist(var_data, bins=20, alpha=0.7, color="red")
             ax.set_title("Value at Risk (VaR) Distribution")
@@ -240,17 +237,11 @@ if uploaded_file:
             sharpe_ratio = performance_data["Sharpe Ratio"].astype(float)
             st.line_chart(sharpe_ratio)
 
-    # Interactive Table with Performance Data
-    if "Performance Metrics" in data:
-        st.header("Interactive Performance Data Table")
-        performance_data = data["Performance Metrics"]
-        st.dataframe(performance_data)
-
     # Moving Average Chart
     if "Performance Over Time" in data:
         st.header("Moving Average of Fund Returns")
         performance_data = data["Performance Over Time"]
-        moving_avg = performance_data["Fund Return"].astype(float).rolling(window=12).mean()
+        moving_avg = performance_data["Fund Return (%)"].astype(float).rolling(window=12).mean()
         st.line_chart(moving_avg)
 
     # Create an investment growth simulation
@@ -259,6 +250,6 @@ if uploaded_file:
         simulation_data = data["Investment Simulation"]
         initial_investment = st.number_input("Initial Investment Amount", min_value=0, value=10000)
         years = st.slider("Investment Duration (years)", 1, 30, 10)
-        growth_rate = simulation_data["Annual Return"].mean()
+        growth_rate = simulation_data["Annual Return (%)"].mean()
         future_value = initial_investment * (1 + growth_rate / 100) ** years
         st.write(f"Estimated Future Value: ${future_value:,.2f}")
