@@ -23,7 +23,18 @@ def generate_line_chart(data, columns, title):
 
 # Function to generate correlation heatmap
 def generate_correlation_heatmap(data, title):
-    corr = data.corr()
+    # Exclude non-numeric columns (e.g., date columns)
+    numeric_data = data.select_dtypes(include=['float64', 'int64'])
+
+    # If there's no numeric data, we can't compute correlations
+    if numeric_data.empty:
+        st.warning("No numeric columns available for correlation analysis.")
+        return None
+
+    # Calculate correlation matrix
+    corr = numeric_data.corr()
+
+    # Create and display the heatmap
     fig, ax = plt.subplots()
     cax = ax.matshow(corr, cmap="coolwarm")
     fig.colorbar(cax)
