@@ -8,7 +8,7 @@ import os
 def generate_factsheet(data, output_file):
     class PDF(FPDF):
         def header(self):
-            self.set_font('Arial', 'B', 12)
+            self.set_font('Arial', 'B', 14)
             self.cell(0, 10, 'Fund Factsheet', border=False, ln=True, align='C')
             self.ln(10)
 
@@ -24,13 +24,18 @@ def generate_factsheet(data, output_file):
 
         def add_table(self, headers, rows):
             self.set_font('Arial', 'B', 10)
-            for header in headers:
-                self.cell(40, 10, header, 1, 0, 'C')
+            col_widths = [40 for _ in headers]  # equal width for all columns
+
+            # Header Row
+            for header, width in zip(headers, col_widths):
+                self.cell(width, 10, header, 1, 0, 'C')
             self.ln()
+
+            # Data Rows
             self.set_font('Arial', '', 10)
             for row in rows:
-                for cell in row:
-                    self.cell(40, 10, str(cell), 1, 0, 'C')
+                for cell, width in zip(row, col_widths):
+                    self.cell(width, 10, str(cell), 1, 0, 'C')
                 self.ln()
 
         def add_graph(self, image_path):
