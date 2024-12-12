@@ -6,10 +6,17 @@ import numpy as np
 
 # Function to generate line chart for performance comparison (Fund vs Benchmark)
 def generate_line_chart(data, columns, title):
+    # Ensure the columns in 'y' exist in the dataframe
     columns = [col for col in columns if col in data.columns]
-    if len(columns) < 2:
-        st.error("Not enough columns available for comparison!")
-        return None
+    
+    if len(columns) < 1:
+        st.warning("Not enough columns available for the requested comparison! Proceeding with available data.")
+        # Use all available columns for the line chart
+        columns = [col for col in data.columns if data[col].dtype in ['float64', 'int64']]
+        if len(columns) < 1:
+            st.error("No numeric data available for visualization.")
+            return None
+    
     fig = px.line(data, x=data.index, y=columns, title=title)
     return fig
 
@@ -220,4 +227,3 @@ if uploaded_file:
             st.sidebar.download_button(label=f"Download {sheet_name} data", data=sheet_data.to_csv(index=False), file_name=f"{sheet_name}_data.csv")
 
     # Add more charts or tables based on user requests or preferences
-
