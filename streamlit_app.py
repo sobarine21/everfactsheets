@@ -10,7 +10,7 @@ def generate_factsheet(data, output_file):
         def header(self):
             self.set_font('Arial', 'B', 16)
             self.cell(0, 10, 'Fund Factsheet', 0, 1, 'C')
-            self.ln(10)
+            self.ln(5)
 
         def chapter_title(self, title):
             self.set_font('Arial', 'B', 12)
@@ -26,7 +26,7 @@ def generate_factsheet(data, output_file):
             self.set_font('Arial', 'B', 10)
             if not col_widths:
                 col_widths = [40] * len(headers)  # Equal column width by default
-            
+
             # Header Row
             for header, width in zip(headers, col_widths):
                 self.cell(width, 10, header, 1, 0, 'C')
@@ -51,26 +51,48 @@ def generate_factsheet(data, output_file):
     pdf = PDF()
     pdf.add_page()
 
-    # Dynamic data for fund factsheet
-    for section, content in data.items():
-        if isinstance(content, dict):
-            pdf.chapter_title(section)
-            for sub_section, sub_content in content.items():
-                if isinstance(sub_content, pd.DataFrame):
-                    pdf.chapter_title(sub_section)
-                    headers = list(sub_content.columns)
-                    rows = sub_content.values.tolist()
-                    pdf.add_table(headers, rows)
-                else:
-                    pdf.chapter_body(f"{sub_section}: {sub_content}")
-        elif isinstance(content, pd.DataFrame):
-            pdf.chapter_title(section)
-            headers = list(content.columns)
-            rows = content.values.tolist()
-            pdf.add_table(headers, rows)
-        elif isinstance(content, str):
-            pdf.chapter_title(section)
-            pdf.chapter_body(content)
+    # Fund Details Section
+    if 'Fund Details' in data:
+        pdf.chapter_title('Fund Overview')
+        fund_details = data['Fund Details']
+        for key, value in fund_details.items():
+            pdf.set_font('Arial', 'B', 10)
+            pdf.cell(60, 10, key + ":", border=False)
+            pdf.set_font('Arial', '', 10)
+            pdf.cell(0, 10, str(value), ln=True)
+
+    # Portfolio Holdings Section
+    if 'Portfolio Holdings' in data:
+        pdf.chapter_title('Portfolio Holdings')
+        portfolio = data['Portfolio Holdings']
+        headers = list(portfolio.columns)
+        rows = portfolio.values.tolist()
+        pdf.add_table(headers, rows)
+
+    # Performance Metrics Section
+    if 'Performance Metrics' in data:
+        pdf.chapter_title('Performance Metrics')
+        performance = data['Performance Metrics']
+        for key, value in performance.items():
+            pdf.set_font('Arial', 'B', 10)
+            pdf.cell(60, 10, key + ":", border=False)
+            pdf.set_font('Arial', '', 10)
+            pdf.cell(0, 10, str(value), ln=True)
+
+    # Risk Metrics Section
+    if 'Risk Metrics' in data:
+        pdf.chapter_title('Risk Metrics')
+        risk = data['Risk Metrics']
+        for key, value in risk.items():
+            pdf.set_font('Arial', 'B', 10)
+            pdf.cell(60, 10, key + ":", border=False)
+            pdf.set_font('Arial', '', 10)
+            pdf.cell(0, 10, str(value), ln=True)
+
+    # Add Graph if available
+    if 'Graph' in data:
+        pdf.chapter_title('Fund Performance Chart')
+        pdf.add_graph(data['Graph'])
 
     pdf.footer()
     pdf.output(output_file)
@@ -86,13 +108,43 @@ if uploaded_file:
 
     if selected_sheets:
         data = {}
+
+        # Parse the data and organize it
         for sheet in selected_sheets:
             sheet_data = pd.read_excel(uploaded_file, sheet_name=sheet)
             data[sheet] = sheet_data
 
+        # Parse specific sections from the Excel file
         if st.button("Generate Factsheet"):
+            # Example of how the data dictionary should be structured for real fund factsheet:
+            # This is an example; modify based on the Excel sheet's contents
+            factsheet_data = {
+                "Fund Details": {
+                    "Fund Name": "XYZ Growth Fund",
+                    "Launch Date": "01-Jan-2010",
+                    "Investment Objective": "The fund aims to achieve long-term capital growth by investing in a diversified portfolio of equities.",
+                    "Fund Manager": "John Doe"
+                },
+                "Portfolio Holdings": pd.DataFrame({
+                    "Asset": ["Stock A", "Stock B", "Bond C", "Cash"],
+                    "Allocation (%)": [40, 35, 15, 10]
+                }),
+                "Performance Metrics": {
+                    "1 Year Return": "8%",
+                    "YTD Return": "5%",
+                    "3 Year Return": "12%",
+                    "Since Inception": "60%"
+                },
+                "Risk Metrics": {
+                    "Standard Deviation": "15%",
+                    "Sharpe Ratio": "1.2"
+                },
+                "Graph": "path_to_performance_graph.png"  # Path to graph image if needed
+            }
+
+            # Generating the PDF
             output_file = "dynamic_factsheet.pdf"
-            generate_factsheet(data, output_file)
+            generate_factsheet(factsheet_data, output_file)
 
             with open(output_file, "rb") as pdf_file:
                 st.download_button(label="Download Factsheet", data=pdf_file, file_name=output_file, mime="application/pdf")
