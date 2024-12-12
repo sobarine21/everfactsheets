@@ -1,109 +1,121 @@
 import streamlit as st
 import pandas as pd
 from fpdf import FPDF
+import matplotlib.pyplot as plt
+import os
 
-# Generate PDF Function
+# Function to generate a PDF factsheet dynamically
 def generate_factsheet(data, output_file):
     class PDF(FPDF):
         def header(self):
             self.set_font('Arial', 'B', 12)
-            self.cell(0, 10, 'VC & PE Fund Factsheet', 0, 1, 'C')
+            self.cell(0, 10, 'Fund Factsheet', border=False, ln=True, align='C')
+            self.ln(10)
 
-        def footer(self):
-            self.set_y(-15)
-            self.set_font('Arial', 'I', 8)
-            self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+        def chapter_title(self, title):
+            self.set_font('Arial', 'B', 12)
+            self.cell(0, 10, title, border=False, ln=True, align='L')
+            self.ln(5)
+
+        def chapter_body(self, body):
+            self.set_font('Arial', '', 10)
+            self.multi_cell(0, 10, body)
+            self.ln()
+
+        def add_table(self, headers, rows):
+            self.set_font('Arial', 'B', 10)
+            for header in headers:
+                self.cell(40, 10, header, 1, 0, 'C')
+            self.ln()
+            self.set_font('Arial', '', 10)
+            for row in rows:
+                for cell in row:
+                    self.cell(40, 10, str(cell), 1, 0, 'C')
+                self.ln()
+
+        def add_graph(self, image_path):
+            self.image(image_path, x=10, y=self.get_y(), w=190)
+            self.ln(65)
 
     pdf = PDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Investment Objective
-    pdf.set_font('Arial', 'B', 10)
-    pdf.cell(0, 10, 'Investment Objective:', ln=True)
-    pdf.set_font('Arial', '', 10)
-    pdf.multi_cell(0, 10, data['investment_objective'])
+    # Dynamically add sections from the data
+    for section, content in data.items():
+        if isinstance(content, dict):
+            pdf.chapter_title(section)
+            for sub_section, sub_content in content.items():
+                if isinstance(sub_content, pd.DataFrame):
+                    pdf.chapter_title(sub_section)
+                    headers = list(sub_content.columns)
+                    rows = sub_content.values.tolist()
+                    pdf.add_table(headers, rows)
+                else:
+                    pdf.chapter_body(f"{sub_section}: {sub_content}")
+        elif isinstance(content, pd.DataFrame):
+            pdf.chapter_title(section)
+            headers = list(content.columns)
+            rows = content.values.tolist()
+            pdf.add_table(headers, rows)
+        elif isinstance(content, str):
+            pdf.chapter_title(section)
+            pdf.chapter_body(content)
 
-    # Fund Manager Details
-    pdf.set_font('Arial', 'B', 10)
-    pdf.cell(0, 10, 'Fund Manager Details:', ln=True)
-    pdf.set_font('Arial', '', 10)
-    pdf.multi_cell(0, 10, data['fund_manager'])
-
-    # Key Metrics
-    pdf.set_font('Arial', 'B', 10)
-    pdf.cell(0, 10, 'Key Metrics:', ln=True)
-    pdf.set_font('Arial', '', 10)
-    pdf.cell(0, 10, f"Total Fund Size: {data['total_fund_size']}", ln=True)
-    pdf.cell(0, 10, f"Vintage Year: {data['vintage_year']}", ln=True)
-    pdf.cell(0, 10, f"Number of Portfolio Companies: {data['portfolio_companies']}", ln=True)
-
-    # Top Portfolio Companies
-    pdf.set_font('Arial', 'B', 10)
-    pdf.cell(0, 10, 'Top Portfolio Companies:', ln=True)
-    pdf.set_font('Arial', '', 10)
-    for company in data['top_companies']:
-        pdf.cell(0, 10, f"- {company}", ln=True)
-
-    # Financial Metrics
-    pdf.set_font('Arial', 'B', 10)
-    pdf.cell(0, 10, 'Financial Metrics:', ln=True)
-    pdf.set_font('Arial', '', 10)
-    pdf.cell(0, 10, f"IRR: {data['irr']}%", ln=True)
-    pdf.cell(0, 10, f"MOIC: {data['moic']}x", ln=True)
-
-    # Sector Breakdown
-    pdf.set_font('Arial', 'B', 10)
-    pdf.cell(0, 10, 'Sector Breakdown:', ln=True)
-    pdf.set_font('Arial', '', 10)
-    for sector, percentage in data['sector_breakdown'].items():
-        pdf.cell(0, 10, f"{sector}: {percentage}%", ln=True)
-
-    # Disclosures (on the second page)
-    pdf.add_page()
-    pdf.set_font('Arial', 'B', 10)
-    pdf.cell(0, 10, 'Disclosures:', ln=True)
-    pdf.set_font('Arial', '', 10)
-    pdf.multi_cell(0, 10, data['disclosures'])
-
+    # Save the PDF
     pdf.output(output_file)
 
-# Streamlit Web App
-st.title("VC & PE Fund Factsheet Generator")
+# Streamlit application
+st.title('Dynamic Fund Factsheet Generator')
 
-uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx'])
-if uploaded_file is not None:
-    df = pd.read_excel(uploaded_file, sheet_name=None)
+uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
-    # Extract Data from Different Sheets
-    overview_data = df['Overview'].iloc[0]
-    top_companies = df['Top Companies']['Company Name'].tolist()
-    sector_breakdown = dict(zip(df['Sector Breakdown']['Sector'], df['Sector Breakdown']['Percentage']))
+if uploaded_file:
+    sheets = pd.ExcelFile(uploaded_file).sheet_names
+    selected_sheets = st.multiselect("Select Sheets to Include", sheets, default=sheets)
 
-    # Factsheet Data
-    factsheet_data = {
-        'investment_objective': overview_data['Investment Objective'],
-        'fund_manager': overview_data['Fund Manager'],
-        'total_fund_size': overview_data['Total Fund Size'],
-        'vintage_year': overview_data['Vintage Year'],
-        'portfolio_companies': overview_data['Portfolio Companies'],
-        'top_companies': top_companies,
-        'irr': overview_data['IRR'],
-        'moic': overview_data['MOIC'],
-        'sector_breakdown': sector_breakdown,
-        'disclosures': df['Disclosures'].iloc[0, 0]
-    }
+    if selected_sheets:
+        data = {}
+        for sheet in selected_sheets:
+            sheet_data = pd.read_excel(uploaded_file, sheet_name=sheet)
+            data[sheet] = sheet_data
 
-    if st.button("Generate Factsheet"):
-        output_file = "VC_PE_Fund_Factsheet.pdf"
-        generate_factsheet(factsheet_data, output_file)
-        with open(output_file, "rb") as file:
-            st.download_button(
-                label="Download Factsheet",
-                data=file,
-                file_name=output_file,
-                mime="application/pdf"
-            )
+        if st.button("Generate Factsheet"):
+            output_file = "dynamic_factsheet.pdf"
+            generate_factsheet(data, output_file)
 
-# Required Installations
-# pip install streamlit pandas fpdf
+            with open(output_file, "rb") as pdf_file:
+                st.download_button(label="Download Factsheet", data=pdf_file, file_name=output_file, mime="application/pdf")
+
+# Dynamic plotting for visualization
+if uploaded_file:
+    st.header("Data Visualization")
+    sheet_name = st.selectbox("Select a sheet for visualization", sheets)
+    sheet_data = pd.read_excel(uploaded_file, sheet_name=sheet_name)
+
+    st.dataframe(sheet_data)
+
+    numeric_columns = sheet_data.select_dtypes(include=['float64', 'int64']).columns
+    categorical_columns = sheet_data.select_dtypes(include=['object']).columns
+
+    x_axis = st.selectbox("Select X-Axis", categorical_columns)
+    y_axis = st.selectbox("Select Y-Axis", numeric_columns)
+
+    if x_axis and y_axis:
+        plt.figure(figsize=(10, 6))
+        plt.bar(sheet_data[x_axis], sheet_data[y_axis])
+        plt.xlabel(x_axis)
+        plt.ylabel(y_axis)
+        plt.title(f"{y_axis} vs {x_axis}")
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+
+        graph_path = "graph.png"
+        plt.savefig(graph_path)
+        st.pyplot(plt)
+
+        if st.button("Add Graph to Factsheet"):
+            output_file = "dynamic_factsheet_with_graph.pdf"
+            generate_factsheet({"Graph": graph_path}, output_file)
+
+            with open(output_file, "rb") as pdf_file:
+                st.download_button(label="Download Factsheet with Graph", data=pdf_file, file_name=output_file, mime="application/pdf")
