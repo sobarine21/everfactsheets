@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 from fpdf import FPDF
-import seaborn as sns
 import os
+import plotly.express as px
 
 # Function to generate a PDF factsheet dynamically
 def generate_factsheet(data, output_file):
@@ -33,10 +32,6 @@ def generate_factsheet(data, output_file):
                 for cell in row:
                     self.cell(40, 10, cell, 1, 0, 'C')
                 self.ln()
-
-        def add_graph(self, image_path):
-            self.image(image_path, x=10, y=self.get_y(), w=190)
-            self.ln(65)
 
     pdf = PDF()
     pdf.add_page()
@@ -71,11 +66,6 @@ def generate_factsheet(data, output_file):
         headers = list(risk_data.columns)
         rows = risk_data.values.tolist()
         pdf.add_table(headers, rows)
-
-    # Add graphs to the PDF
-    if "Graphs" in data:
-        for graph in data["Graphs"]:
-            pdf.add_graph(graph)
 
     # Save the PDF
     pdf.output(output_file)
@@ -147,29 +137,9 @@ if uploaded_file:
         y_axis = st.selectbox("Select Y-Axis", numeric_columns)
 
         if x_axis and y_axis:
-            plt.figure(figsize=(10, 6))
-            plt.bar(sheet_data[x_axis], sheet_data[y_axis])
-            plt.xlabel(x_axis)
-            plt.ylabel(y_axis)
-            plt.title(f"{y_axis} vs {x_axis}")
-            plt.xticks(rotation=45)
-            plt.tight_layout()
-
-            graph_path = "graph.png"
-            plt.savefig(graph_path)
-            st.pyplot(plt)
-
-            # Add Graph to PDF
-            if st.button("Add Graph to Factsheet"):
-                if "Graphs" not in data:
-                    data["Graphs"] = []
-                data["Graphs"].append(graph_path)
-
-                output_file_with_graph = "dynamic_factsheet_with_graph.pdf"
-                generate_factsheet(data, output_file_with_graph)
-
-                with open(output_file_with_graph, "rb") as pdf_file:
-                    st.download_button(label="Download Factsheet with Graph", data=pdf_file, file_name=output_file_with_graph, mime="application/pdf")
+            st.subheader(f"{y_axis} vs {x_axis} (Bar Chart)")
+            bar_chart_data = sheet_data.groupby(x_axis)[y_axis].sum().reset_index()
+            st.bar_chart(bar_chart_data.set_index(x_axis))
 
         # Create Pie Chart Visualization
         if len(numeric_columns) >= 1 and len(categorical_columns) >= 1:
@@ -178,25 +148,13 @@ if uploaded_file:
             pie_value = st.selectbox("Select Value Column", numeric_columns)
 
             if pie_column and pie_value:
-                pie_data = sheet_data.groupby(pie_column)[pie_value].sum()
-                plt.figure(figsize=(8, 6))
-                pie_data.plot(kind='pie', autopct='%1.1f%%', startangle=90)
-                plt.title(f"{pie_value} Distribution by {pie_column}")
-                plt.ylabel('')
-                plt.tight_layout()
+                pie_data = sheet_data.groupby(pie_column)[pie_value].sum().reset_index()
+                fig = px.pie(pie_data, names=pie_column, values=pie_value, title=f"{pie_value} Distribution by {pie_column}")
+                st.plotly_chart(fig)
 
-                pie_chart_path = "pie_chart.png"
-                plt.savefig(pie_chart_path)
-                st.pyplot(plt)
+        # Create Line Chart for Performance Metrics if applicable
+        if 'Performance Metrics' in selected_sheets and len(numeric_columns) > 1:
+            st.subheader("Performance Metrics - Line Chart")
+            performance_data = sheet_data[numeric_columns].apply(pd.to_numeric, errors='coerce')
+            st.line_chart(performance_data)
 
-                # Add Pie Chart to PDF
-                if st.button("Add Pie Chart to Factsheet"):
-                    if "Graphs" not in data:
-                        data["Graphs"] = []
-                    data["Graphs"].append(pie_chart_path)
-
-                    output_file_with_pie = "dynamic_factsheet_with_pie.pdf"
-                    generate_factsheet(data, output_file_with_pie)
-
-                    with open(output_file_with_pie, "rb") as pdf_file:
-                        st.download_button(label="Download Factsheet with Pie Chart", data=pdf_file, file_name=output_file_with_pie, mime="application/pdf")
