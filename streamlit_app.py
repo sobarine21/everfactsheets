@@ -1,102 +1,109 @@
 import streamlit as st
 import pandas as pd
 from fpdf import FPDF
-import matplotlib.pyplot as plt
 
-# Function to generate a pie chart for sector breakdown
-def generate_sector_chart(data, output_path):
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.pie(data['Percentage'], labels=data['Sector'], autopct='%1.1f%%', startangle=140)
-    plt.title("Sector Breakdown")
-    plt.savefig(output_path)
-    plt.close()
-
-# Function to generate a factsheet PDF
+# Generate PDF Function
 def generate_factsheet(data, output_file):
-    pdf = FPDF()
+    class PDF(FPDF):
+        def header(self):
+            self.set_font('Arial', 'B', 12)
+            self.cell(0, 10, 'VC & PE Fund Factsheet', 0, 1, 'C')
+
+        def footer(self):
+            self.set_y(-15)
+            self.set_font('Arial', 'I', 8)
+            self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+    pdf = PDF()
     pdf.set_auto_page_break(auto=True, margin=15)
-    
-    # Page 1 - Factsheet Content
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
 
-    # Add Investment Objective
-    pdf.set_font("Arial", style="B", size=14)
-    pdf.cell(0, 10, "Investment Objective", ln=True)
-    pdf.set_font("Arial", size=12)
-    pdf.multi_cell(0, 10, data['investment_objective'])  # Removed `ln=True`
-    pdf.ln(5)
+    # Investment Objective
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 10, 'Investment Objective:', ln=True)
+    pdf.set_font('Arial', '', 10)
+    pdf.multi_cell(0, 10, data['investment_objective'])
 
-    # Add Top Holdings
-    pdf.set_font("Arial", style="B", size=14)
-    pdf.cell(0, 10, "Top Holdings", ln=True)
-    pdf.set_font("Arial", size=12)
-    pdf.cell(60, 10, "Stock Name", 1, 0)
-    pdf.cell(40, 10, "Percentage (%)", 1, 1)
-    for index, row in data['top_holdings'].iterrows():
-        pdf.cell(60, 10, row['Stock Name'], 1, 0)
-        pdf.cell(40, 10, str(row['Percentage']), 1, 1)
+    # Fund Manager Details
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 10, 'Fund Manager Details:', ln=True)
+    pdf.set_font('Arial', '', 10)
+    pdf.multi_cell(0, 10, data['fund_manager'])
 
-    pdf.ln(5)
+    # Key Metrics
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 10, 'Key Metrics:', ln=True)
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 10, f"Total Fund Size: {data['total_fund_size']}", ln=True)
+    pdf.cell(0, 10, f"Vintage Year: {data['vintage_year']}", ln=True)
+    pdf.cell(0, 10, f"Number of Portfolio Companies: {data['portfolio_companies']}", ln=True)
 
-    # Add Sector Breakdown Pie Chart
-    pdf.set_font("Arial", style="B", size=14)
-    pdf.cell(0, 10, "Sector Breakdown", ln=True)
-    pdf.ln(5)
+    # Top Portfolio Companies
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 10, 'Top Portfolio Companies:', ln=True)
+    pdf.set_font('Arial', '', 10)
+    for company in data['top_companies']:
+        pdf.cell(0, 10, f"- {company}", ln=True)
 
-    pdf.image(data['sector_chart'], x=10, w=190)  # Add the saved chart
+    # Financial Metrics
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 10, 'Financial Metrics:', ln=True)
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 10, f"IRR: {data['irr']}%", ln=True)
+    pdf.cell(0, 10, f"MOIC: {data['moic']}x", ln=True)
 
-    # Page 2 - Disclosures
+    # Sector Breakdown
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 10, 'Sector Breakdown:', ln=True)
+    pdf.set_font('Arial', '', 10)
+    for sector, percentage in data['sector_breakdown'].items():
+        pdf.cell(0, 10, f"{sector}: {percentage}%", ln=True)
+
+    # Disclosures (on the second page)
     pdf.add_page()
-    pdf.set_font("Arial", style="B", size=14)
-    pdf.cell(0, 10, "Disclosures", ln=True)
-    pdf.set_font("Arial", size=12)
-    pdf.multi_cell(0, 10, data['disclosures'])  # Removed `ln=True`
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 10, 'Disclosures:', ln=True)
+    pdf.set_font('Arial', '', 10)
+    pdf.multi_cell(0, 10, data['disclosures'])
 
     pdf.output(output_file)
 
-# Streamlit application
-def main():
-    st.title("VC/PE Fund Factsheet Generator")
-    st.write("Upload your Excel file with all required data points to generate a factsheet.")
+# Streamlit Web App
+st.title("VC & PE Fund Factsheet Generator")
 
-    # File upload
-    uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
-    
-    if uploaded_file:
-        # Load Excel file
-        excel_data = pd.ExcelFile(uploaded_file)
-        
-        # Load different tabs
-        investment_objective = excel_data.parse('Investment Objective')
-        top_holdings = excel_data.parse('Top Holdings')
-        sector_breakdown = excel_data.parse('Sector Breakdown')
-        disclosures = excel_data.parse('Disclosures')
+uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx'])
+if uploaded_file is not None:
+    df = pd.read_excel(uploaded_file, sheet_name=None)
 
-        # Extract data for the factsheet
-        data = {
-            'investment_objective': investment_objective.iloc[0, 0],
-            'top_holdings': top_holdings,
-            'sector_breakdown': sector_breakdown,
-            'disclosures': disclosures.iloc[0, 0],
-            'sector_chart': "sector_chart.png"
-        }
+    # Extract Data from Different Sheets
+    overview_data = df['Overview'].iloc[0]
+    top_companies = df['Top Companies']['Company Name'].tolist()
+    sector_breakdown = dict(zip(df['Sector Breakdown']['Sector'], df['Sector Breakdown']['Percentage']))
 
-        # Generate sector breakdown chart
-        generate_sector_chart(sector_breakdown, data['sector_chart'])
+    # Factsheet Data
+    factsheet_data = {
+        'investment_objective': overview_data['Investment Objective'],
+        'fund_manager': overview_data['Fund Manager'],
+        'total_fund_size': overview_data['Total Fund Size'],
+        'vintage_year': overview_data['Vintage Year'],
+        'portfolio_companies': overview_data['Portfolio Companies'],
+        'top_companies': top_companies,
+        'irr': overview_data['IRR'],
+        'moic': overview_data['MOIC'],
+        'sector_breakdown': sector_breakdown,
+        'disclosures': df['Disclosures'].iloc[0, 0]
+    }
 
-        # Generate the factsheet
-        output_file = "factsheet.pdf"
-        generate_factsheet(data, output_file)
-
-        # Provide download link
+    if st.button("Generate Factsheet"):
+        output_file = "VC_PE_Fund_Factsheet.pdf"
+        generate_factsheet(factsheet_data, output_file)
         with open(output_file, "rb") as file:
             st.download_button(
-                label="Download Factsheet PDF",
+                label="Download Factsheet",
                 data=file,
-                file_name="factsheet.pdf",
-                mime="application/pdf",
+                file_name=output_file,
+                mime="application/pdf"
             )
 
-if __name__ == "__main__":
-    main()
+# Required Installations
+# pip install streamlit pandas fpdf
