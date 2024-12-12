@@ -51,7 +51,7 @@ def generate_factsheet(data, output_file):
     pdf = PDF()
     pdf.add_page()
 
-    # Fund Details Section
+    # Dynamically add content based on the uploaded data
     if 'Fund Details' in data:
         pdf.chapter_title('Fund Overview')
         fund_details = data['Fund Details']
@@ -109,40 +109,51 @@ if uploaded_file:
     if selected_sheets:
         data = {}
 
-        # Parse the data and organize it
+        # Parsing the uploaded data dynamically based on sheet names
         for sheet in selected_sheets:
             sheet_data = pd.read_excel(uploaded_file, sheet_name=sheet)
             data[sheet] = sheet_data
 
-        # Parse specific sections from the Excel file
-        if st.button("Generate Factsheet"):
-            # Example of how the data dictionary should be structured for real fund factsheet:
-            # This is an example; modify based on the Excel sheet's contents
-            factsheet_data = {
-                "Fund Details": {
-                    "Fund Name": "XYZ Growth Fund",
-                    "Launch Date": "01-Jan-2010",
-                    "Investment Objective": "The fund aims to achieve long-term capital growth by investing in a diversified portfolio of equities.",
-                    "Fund Manager": "John Doe"
-                },
-                "Portfolio Holdings": pd.DataFrame({
-                    "Asset": ["Stock A", "Stock B", "Bond C", "Cash"],
-                    "Allocation (%)": [40, 35, 15, 10]
-                }),
-                "Performance Metrics": {
-                    "1 Year Return": "8%",
-                    "YTD Return": "5%",
-                    "3 Year Return": "12%",
-                    "Since Inception": "60%"
-                },
-                "Risk Metrics": {
-                    "Standard Deviation": "15%",
-                    "Sharpe Ratio": "1.2"
-                },
-                "Graph": "path_to_performance_graph.png"  # Path to graph image if needed
-            }
+        # Example parsing of specific sheets (this will depend on your Excel file structure):
+        factsheet_data = {}
 
-            # Generating the PDF
+        # Extract 'Fund Details' (we assume a sheet named 'Fund Details' in the file)
+        if 'Fund Details' in data:
+            fund_details_df = data['Fund Details']
+            fund_details = fund_details_df.set_index(0).to_dict()[1]
+            factsheet_data['Fund Details'] = fund_details
+
+        # Extract 'Portfolio Holdings' (assumed sheet 'Portfolio Holdings')
+        if 'Portfolio Holdings' in data:
+            portfolio_df = data['Portfolio Holdings']
+            factsheet_data['Portfolio Holdings'] = portfolio_df
+
+        # Extract 'Performance Metrics' (assumed sheet 'Performance Metrics')
+        if 'Performance Metrics' in data:
+            performance_df = data['Performance Metrics']
+            performance_dict = performance_df.set_index(0).to_dict()[1]
+            factsheet_data['Performance Metrics'] = performance_dict
+
+        # Extract 'Risk Metrics' (assumed sheet 'Risk Metrics')
+        if 'Risk Metrics' in data:
+            risk_df = data['Risk Metrics']
+            risk_dict = risk_df.set_index(0).to_dict()[1]
+            factsheet_data['Risk Metrics'] = risk_dict
+
+        # Optionally generate a graph (assumed data exists for generating a performance graph)
+        if 'Performance' in data:  # If there's a 'Performance' sheet
+            performance_data = data['Performance']
+            plt.figure(figsize=(10, 6))
+            plt.plot(performance_data['Date'], performance_data['Performance'])
+            plt.xlabel('Date')
+            plt.ylabel('Performance')
+            plt.title('Fund Performance Over Time')
+            graph_path = "fund_performance.png"
+            plt.savefig(graph_path)
+            factsheet_data['Graph'] = graph_path
+
+        # Generate PDF factsheet based on extracted data
+        if st.button("Generate Factsheet"):
             output_file = "dynamic_factsheet.pdf"
             generate_factsheet(factsheet_data, output_file)
 
