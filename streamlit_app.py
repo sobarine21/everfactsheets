@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import matplotlib.pyplot as plt
 import numpy as np
+import io
 
 # Function to generate line chart for performance comparison (Fund vs Benchmark)
 def generate_line_chart(data, columns, title):
@@ -44,6 +45,76 @@ st.title('Dynamic Fund Visualization Dashboard')
 
 # File uploader to upload the Excel file
 uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
+
+# Option to download a template Excel file
+def generate_template():
+    # Create a template DataFrame
+    fund_details = pd.DataFrame({
+        "Fund Name": [""],
+        "Fund Manager": [""],
+        "Launch Date": [""],
+        "Total Assets": [""],
+        "Fund Type": [""]
+    })
+
+    performance_metrics = pd.DataFrame({
+        "Date": [""],
+        "Fund Return (%)": [""],
+        "Benchmark Return (%)": [""],
+        "Sharpe Ratio": [""]
+    })
+
+    asset_allocation = pd.DataFrame({
+        "Asset Class": [""],
+        "Value": [""]
+    })
+
+    performance_over_time = pd.DataFrame({
+        "Date": [""],
+        "Fund Return (%)": [""],
+        "Benchmark Return (%)": [""]
+    })
+
+    risk_metrics = pd.DataFrame({
+        "Date": [""],
+        "Volatility (%)": [""],
+        "VaR (%)": [""]
+    })
+
+    sector_allocation = pd.DataFrame({
+        "Sector": [""],
+        "Value": [""]
+    })
+
+    investment_simulation = pd.DataFrame({
+        "Annual Return (%)": [""]
+    })
+
+    # Save these DataFrames into an Excel file
+    with pd.ExcelWriter('fund_dashboard_template.xlsx') as writer:
+        fund_details.to_excel(writer, sheet_name='Fund Details', index=False)
+        performance_metrics.to_excel(writer, sheet_name='Performance Metrics', index=False)
+        asset_allocation.to_excel(writer, sheet_name='Asset Allocation', index=False)
+        performance_over_time.to_excel(writer, sheet_name='Performance Over Time', index=False)
+        risk_metrics.to_excel(writer, sheet_name='Risk Metrics', index=False)
+        sector_allocation.to_excel(writer, sheet_name='Sector Allocation', index=False)
+        investment_simulation.to_excel(writer, sheet_name='Investment Simulation', index=False)
+
+    # Return the file in memory
+    with open('fund_dashboard_template.xlsx', 'rb') as f:
+        template_file = f.read()
+    
+    return template_file
+
+# Download button for the template
+if st.sidebar.button("Download Data Template"):
+    template_file = generate_template()
+    st.sidebar.download_button(
+        label="Download Fund Dashboard Template",
+        data=template_file,
+        file_name="fund_dashboard_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 if uploaded_file:
     # Load sheet names and allow user to select sheets
@@ -180,25 +251,3 @@ if uploaded_file:
         growth_rate = simulation_data["Annual Return"].mean()
         future_value = initial_investment * (1 + growth_rate / 100) ** years
         st.write(f"Estimated Future Value: ${future_value:,.2f}")
-
-    # Add more features (like sentiment analysis, news sentiment, etc.)
-    st.sidebar.header("Additional Features")
-    sentiment_analysis_enabled = st.sidebar.checkbox("Enable Sentiment Analysis")
-    if sentiment_analysis_enabled:
-        st.subheader("Sentiment Analysis of Fund")
-        # Placeholder for Sentiment Analysis integration
-
-    # Display summary statistics for the entire dataset
-    if "Performance Metrics" in data:
-        st.header("Performance Metrics Summary Statistics")
-        performance_data = data["Performance Metrics"]
-        st.write(performance_data.describe())
-
-    # Option to download data as CSV
-    st.sidebar.header("Download Data")
-    if st.sidebar.button("Download Data as CSV"):
-        for sheet_name, sheet_data in data.items():
-            sheet_data.to_csv(f"{sheet_name}_data.csv", index=False)
-            st.sidebar.download_button(label=f"Download {sheet_name} data", data=sheet_data.to_csv(index=False), file_name=f"{sheet_name}_data.csv")
-
-    # Add more charts or tables based on user requests or preferences
