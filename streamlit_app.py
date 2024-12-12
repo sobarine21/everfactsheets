@@ -24,13 +24,17 @@ def generate_factsheet(data, output_file):
 
         def add_table(self, headers, rows):
             self.set_font('Arial', 'B', 10)
+            # Convert header items to string
+            headers = [str(header) for header in headers]
             for header in headers:
                 self.cell(40, 10, header, 1, 0, 'C')
             self.ln()
             self.set_font('Arial', '', 10)
+            # Convert each row value to string
             for row in rows:
+                row = [str(cell) for cell in row]  # Convert each cell to string
                 for cell in row:
-                    self.cell(40, 10, str(cell), 1, 0, 'C')  # Convert cell value to string
+                    self.cell(40, 10, cell, 1, 0, 'C')
                 self.ln()
 
         def add_graph(self, image_path):
@@ -80,7 +84,7 @@ if uploaded_file:
         for sheet in selected_sheets:
             sheet_data = pd.read_excel(uploaded_file, sheet_name=sheet)
 
-            # Convert all datetime columns to string
+            # Convert all datetime columns to string (to handle Timestamps)
             for column in sheet_data.columns:
                 if sheet_data[column].dtype == 'datetime64[ns]':
                     sheet_data[column] = sheet_data[column].astype(str)
