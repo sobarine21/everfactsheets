@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.express as px
 import matplotlib.pyplot as plt
 import numpy as np
-import io
 import google.generativeai as genai
 
 # Function to generate line chart for performance comparison (Fund vs Benchmark)
@@ -46,92 +45,59 @@ def generate_correlation_heatmap(data, title):
     plt.title(title)
     st.pyplot(fig)
 
-# Function to generate bar chart for top assets
-def generate_bar_chart(data, column, top_n, title):
-    top_assets = data[column].value_counts().head(top_n)
-    fig = px.bar(top_assets, x=top_assets.index, y=top_assets.values, title=title)
-    st.plotly_chart(fig)
-
 # Configure the API key securely from Streamlit's secrets
 # Make sure to add GOOGLE_API_KEY in secrets.toml (for local) or Streamlit Cloud Secrets
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
 # Streamlit App
-st.title('Dynamic Fund Visualization Dashboard')
+st.title('Fund Visualization Dashboard with AI Summary')
 
 # File uploader to upload the Excel file
 uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
-# Option to download a template Excel file
-def generate_template():
-    # Create a template DataFrame
-    fund_details = pd.DataFrame({
-        "Fund Name": [""],
-        "Fund Manager": [""],
-        "Launch Date": [""],
-        "Total Assets": [""],
-        "Fund Type": [""]
-    })
+# Function to generate a fund summary from metrics
+def generate_fund_summary(data):
+    try:
+        # Extract relevant columns for the summary
+        fund_name = data["Fund Details"]["Fund Name"].iloc[0] if "Fund Details" in data else "Unknown Fund"
+        fund_manager = data["Fund Details"]["Fund Manager"].iloc[0] if "Fund Details" in data else "Unknown Manager"
+        launch_date = data["Fund Details"]["Launch Date"].iloc[0] if "Fund Details" in data else "Unknown Date"
+        total_assets = data["Fund Details"]["Total Assets"].iloc[0] if "Fund Details" in data else "Unknown Assets"
+        fund_type = data["Fund Details"]["Fund Type"].iloc[0] if "Fund Details" in data else "Unknown Type"
+        
+        # Performance Data for Fund vs Benchmark
+        performance_data = data["Performance Metrics"] if "Performance Metrics" in data else pd.DataFrame()
+        avg_return = performance_data["Fund Return (%)"].mean() if "Fund Return (%)" in performance_data else "N/A"
+        benchmark_return = performance_data["Benchmark Return (%)"].mean() if "Benchmark Return (%)" in performance_data else "N/A"
+        
+        # Risk Metrics
+        risk_data = data["Risk Metrics"] if "Risk Metrics" in data else pd.DataFrame()
+        volatility = risk_data["Volatility (%)"].mean() if "Volatility (%)" in risk_data else "N/A"
+        var = risk_data["VaR (%)"].mean() if "VaR (%)" in risk_data else "N/A"
 
-    performance_metrics = pd.DataFrame({
-        "Date": [""],
-        "Fund Return (%)": [""],
-        "Benchmark Return (%)": [""],
-        "Sharpe Ratio": [""]
-    })
+        # Prepare the prompt for Gemini AI
+        prompt = f"""
+        Fund Name: {fund_name}
+        Fund Manager: {fund_manager}
+        Launch Date: {launch_date}
+        Total Assets: {total_assets}
+        Fund Type: {fund_type}
+        
+        Average Fund Return: {avg_return}%
+        Average Benchmark Return: {benchmark_return}%
+        Volatility: {volatility}%
+        Value at Risk (VaR): {var}%
+        
+        Please provide a detailed analysis of the fund performance, risk metrics, and overall investment characteristics.
+        """
+        
+        # Return the prompt for Gemini AI to summarize
+        return prompt
+    except Exception as e:
+        st.error(f"Error generating summary: {e}")
+        return ""
 
-    asset_allocation = pd.DataFrame({
-        "Asset Class": [""],
-        "Value": [""]
-    })
-
-    performance_over_time = pd.DataFrame({
-        "Date": [""],
-        "Fund Return (%)": [""],
-        "Benchmark Return (%)": [""]
-    })
-
-    risk_metrics = pd.DataFrame({
-        "Date": [""],
-        "Volatility (%)": [""],
-        "VaR (%)": [""]
-    })
-
-    sector_allocation = pd.DataFrame({
-        "Sector": [""],
-        "Value": [""]
-    })
-
-    investment_simulation = pd.DataFrame({
-        "Annual Return (%)": [""]
-    })
-
-    # Save these DataFrames into an Excel file
-    with pd.ExcelWriter('fund_dashboard_template.xlsx') as writer:
-        fund_details.to_excel(writer, sheet_name='Fund Details', index=False)
-        performance_metrics.to_excel(writer, sheet_name='Performance Metrics', index=False)
-        asset_allocation.to_excel(writer, sheet_name='Asset Allocation', index=False)
-        performance_over_time.to_excel(writer, sheet_name='Performance Over Time', index=False)
-        risk_metrics.to_excel(writer, sheet_name='Risk Metrics', index=False)
-        sector_allocation.to_excel(writer, sheet_name='Sector Allocation', index=False)
-        investment_simulation.to_excel(writer, sheet_name='Investment Simulation', index=False)
-
-    # Return the file in memory
-    with open('fund_dashboard_template.xlsx', 'rb') as f:
-        template_file = f.read()
-    
-    return template_file
-
-# Download button for the template
-if st.sidebar.button("Download Data Template"):
-    template_file = generate_template()
-    st.sidebar.download_button(
-        label="Download Fund Dashboard Template",
-        data=template_file,
-        file_name="fund_dashboard_template.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
+# If file is uploaded
 if uploaded_file:
     # Load sheet names and allow user to select sheets
     sheets = pd.ExcelFile(uploaded_file).sheet_names
@@ -152,6 +118,25 @@ if uploaded_file:
         sheet_data = sheet_data.applymap(str)
 
         data[sheet] = sheet_data
+
+    # Generate Fund Summary using AI
+    if uploaded_file:
+        st.header("AI-Generated Fund Summary and Analysis")
+        
+        # Generate the fund summary based on the metrics
+        fund_summary_prompt = generate_fund_summary(data)
+        
+        try:
+            # Load and configure the model
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # Generate the content using the AI model
+            response = model.generate_content(fund_summary_prompt)
+            
+            # Display the AI generated response
+            st.write(response.text)
+        except Exception as e:
+            st.error(f"Error: {e}")
 
     # Fund Details Section
     if "Fund Details" in data:
@@ -184,32 +169,9 @@ if uploaded_file:
 
         # Bar chart for top asset classes
         st.subheader("Top Asset Classes")
-        generate_bar_chart(asset_data, "Asset Class", 5, "Top 5 Asset Classes")
-
-    # Performance over time line chart (if data exists)
-    if "Performance Over Time" in data:
-        st.header("Performance Over Time")
-        performance_over_time = data["Performance Over Time"]
-
-        # Check if "Fund Return (%)" exists before processing
-        if "Fund Return (%)" in performance_over_time.columns:
-            performance_over_time["Cumulative Fund Return"] = (1 + performance_over_time["Fund Return (%)"].astype(float) / 100).cumprod() - 1
-            st.line_chart(performance_over_time["Cumulative Fund Return"])
-        else:
-            st.warning("'Fund Return (%)' column is missing in Performance Over Time data.")
-
-    # Correlation heatmap for performance metrics
-    if "Performance Metrics" in data:
-        st.header("Correlation Heatmap of Performance Metrics")
-        performance_metrics = data["Performance Metrics"]
-        generate_correlation_heatmap(performance_metrics, "Correlation of Performance Metrics")
-
-    # Sector Distribution (if data exists)
-    if "Sector Allocation" in data:
-        st.header("Sector Allocation")
-        sector_data = data["Sector Allocation"]
-        sector_alloc = sector_data.groupby("Sector")["Value"].sum()
-        fig = px.pie(sector_alloc, names=sector_alloc.index, values=sector_alloc.values, title="Sector Allocation")
+        top_n = 5
+        top_assets = asset_data["Asset Class"].value_counts().head(top_n)
+        fig = px.bar(top_assets, x=top_assets.index, y=top_assets.values, title="Top Asset Classes")
         st.plotly_chart(fig)
 
     # Risk Metrics Visualization
@@ -233,46 +195,3 @@ if uploaded_file:
             ax.set_xlabel("VaR")
             ax.set_ylabel("Frequency")
             st.pyplot(fig)
-
-    # Sharpe Ratio Analysis
-    if "Performance Metrics" in data:
-        st.header("Sharpe Ratio Analysis")
-        performance_data = data["Performance Metrics"]
-        if "Sharpe Ratio" in performance_data.columns:
-            sharpe_ratio = performance_data["Sharpe Ratio"].astype(float)
-            st.line_chart(sharpe_ratio)
-
-    # Moving Average Chart
-    if "Performance Over Time" in data:
-        st.header("Moving Average of Fund Returns")
-        performance_data = data["Performance Over Time"]
-        moving_avg = performance_data["Fund Return (%)"].astype(float).rolling(window=12).mean()
-        st.line_chart(moving_avg)
-
-    # Create an investment growth simulation
-    if "Investment Simulation" in data:
-        st.header("Investment Growth Simulation")
-        simulation_data = data["Investment Simulation"]
-        initial_investment = st.number_input("Initial Investment Amount", min_value=0, value=10000)
-        years = st.slider("Investment Duration (years)", 1, 30, 10)
-        growth_rate = simulation_data["Annual Return (%)"].mean()
-        future_value = initial_investment * (1 + growth_rate / 100) ** years
-        st.write(f"Estimated Future Value: ${future_value:,.2f}")
-
-    # Add Gemini AI feature to generate a summary and factsheet
-    st.sidebar.header("Gemini AI: Fund Summary")
-    prompt = st.text_input("Enter a request to generate a fund summary or factsheet", "Provide a summary of the fund and its key metrics.")
-    
-    if st.sidebar.button("Generate Fund Summary"):
-        try:
-            # Load and configure the model
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            
-            # Generate response from the model
-            response = model.generate_content(prompt)
-            
-            # Display response in Streamlit
-            st.header("AI Generated Fund Summary")
-            st.write(response.text)
-        except Exception as e:
-            st.error(f"Error: {e}")
