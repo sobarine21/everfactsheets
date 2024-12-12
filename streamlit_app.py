@@ -79,7 +79,17 @@ if uploaded_file:
         # Extract data from each selected sheet
         for sheet in selected_sheets:
             sheet_data = pd.read_excel(uploaded_file, sheet_name=sheet, header=None)
-            sheet_data.columns = ['Data Point', 'Value']  # Set columns to expected format
+            
+            # Inspect the number of columns before renaming
+            print(f"Columns in {sheet}: {sheet_data.columns}")
+            
+            # Check if the sheet has the expected structure (2 columns)
+            if sheet_data.shape[1] == 2:
+                sheet_data.columns = ['Data Point', 'Value']  # Set columns to expected format
+            else:
+                # Print the first few rows to debug the column issue
+                print(f"Sheet '{sheet}' has unexpected number of columns. Data preview:\n", sheet_data.head())
+                continue  # Skip this sheet or handle it differently
             
             if sheet == 'Fund Details':
                 fund_details = sheet_data.set_index('Data Point').to_dict()['Value']
