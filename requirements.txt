@@ -1,5 +1,5 @@
 streamlit
 pandas
-numpy
-rapidfuzz
-altair
+fuzzywuzzy
+python-Levenshtein
+openpyxl # For potential Excel output, though not strictly used for output in this version
