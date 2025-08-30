@@ -25,11 +25,6 @@ def perform_fuzzy_matching(
 ) -> pd.DataFrame:
     """
     Performs optimized fuzzy matching on user-selected columns.
-
-    This function is significantly faster because it:
-    1. Collects all unique potential company names from the selected columns.
-    2. Matches each unique name only ONCE.
-    3. Maps the results back to the original DataFrame.
     """
     # 1. Prepare constituents data for fast lookups
     constituent_names = constituents_df['Name'].dropna().astype(str).str.strip().tolist()
@@ -38,7 +33,7 @@ def perform_fuzzy_matching(
     # Initialize results DataFrame to store the best match for each row
     results_df = pd.DataFrame(index=enforcement_df.index)
     results_df['Best Match Name'] = None
-    results_df['Match Score'] = 0
+    results_df['Match Score'] = 0.0
     results_df['Source Column'] = None
     results_df['Source Value'] = None
 
@@ -54,33 +49,35 @@ def perform_fuzzy_matching(
         unique_values = enforcement_df[col_name].dropna().astype(str).str.strip().unique()
         unique_values = [val for val in unique_values if len(val) > 2] # Filter out short strings
 
-        if not unique_values:
+        if not list(unique_values):
             continue
 
         # 4. Create a match map for these unique values
         match_map = {}
+        # Use extract over extractOne for potential bulk improvements later, but process one by one for now
         for val in unique_values:
             match = process.extractOne(
                 val, constituent_names, scorer=fuzz.token_sort_ratio, score_cutoff=match_threshold
             )
             if match:
-                match_map[val] = {'match_name': match[0], 'score': match[1]}
+                match_map[val] = {'match_name': match[0], 'score': float(match[1])}
+
+        if not match_map:
+            continue
 
         # 5. Apply the matches back to the column
-        # This is much faster than iterating row-by-row
-        col_matches = enforcement_df[col_name].map(match_map).dropna()
+        col_series = enforcement_df[col_name].astype(str).str.strip()
+        col_matches = col_series.map(match_map).dropna()
 
         if col_matches.empty:
             continue
             
         # 6. Update the main results if the current column provides a better match
-        # Create a temporary DataFrame for comparison
         temp_df = pd.DataFrame(col_matches.tolist(), index=col_matches.index)
         temp_df['source_column'] = col_name
         temp_df['source_value'] = enforcement_df.loc[col_matches.index, col_name]
 
-        # Find rows where the new score is better than the existing best score
-        is_better_match = temp_df['score'] > results_df.loc[temp_df.index, 'Match Score']
+        is_better_match = temp_df['score'] > results_df.loc[temp_df.index, 'Match Score'].fillna(0)
         
         # Update only those rows
         results_df.loc[temp_df.index[is_better_match], 'Best Match Name'] = temp_df.loc[is_better_match, 'match_name']
@@ -88,17 +85,16 @@ def perform_fuzzy_matching(
         results_df.loc[temp_df.index[is_better_match], 'Source Column'] = temp_df.loc[is_better_match, 'source_column']
         results_df.loc[temp_df.index[is_better_match], 'Source Value'] = temp_df.loc[is_better_match, 'source_value']
 
-
-    progress_bar.progress(1.0, text="Matching complete!")
-    time.sleep(1)
-    progress_bar.empty()
-
+    progress_bar.progress(1.0, text="Finalizing results...")
+    
     # 7. Add Symbol and Sector from the best match
-    results_df['Matched Constituent Symbol'] = results_df['Best Match Name'].map(lambda x: name_to_info.get(x, {}).get('Symbol'))
-    results_df['Matched Constituent Sector'] = results_df['Best Match Name'].map(lambda x: name_to_info.get(x, {}).get('Sector'))
+    results_df['Matched Constituent Symbol'] = results_df['Best Match Name'].map(lambda x: name_to_info.get(x, {}).get('Symbol') if pd.notna(x) else None)
+    results_df['Matched Constituent Sector'] = results_df['Best Match Name'].map(lambda x: name_to_info.get(x, {}).get('Sector') if pd.notna(x) else None)
 
     # 8. Combine original data with matching results
     final_df = pd.concat([enforcement_df, results_df], axis=1)
+
+    progress_bar.empty()
     return final_df
 
 
@@ -114,7 +110,6 @@ def calculate_enforcement_score(
     if calculation_method == 'Count Enforcements':
         return matched_df.groupby('Matched Constituent Symbol').size() * score_multiplier
     
-    # Ensure fine column exists and is numeric
     if not fine_column or fine_column not in matched_df.columns:
         st.error(f"Fine column '{fine_column}' not found. Please re-run matching or select a different method.")
         return pd.Series(dtype='float64')
@@ -201,6 +196,7 @@ with tab1:
 
         if uploaded_enforcement_files:
             st.session_state.enforcement_dfs = {}
+            has_error = False
             for file in uploaded_enforcement_files:
                 try:
                     df = load_and_prepare_df(file.getvalue())
@@ -208,12 +204,17 @@ with tab1:
                     st.success(f"✅ Loaded '{file.name}' with {len(df):,} records.")
                 except Exception as e:
                     st.error(f"Error loading '{file.name}': {e}")
+                    has_error = True
+            
+            if not has_error and st.session_state.enforcement_dfs:
+                 # Combine all enforcement data into a single DataFrame
+                st.session_state.combined_enforcement_df = pd.concat(
+                    st.session_state.enforcement_dfs.values(), ignore_index=True
+                )
     
     # Check if both sets of data are loaded to proceed
-    if st.session_state.constituents_df is not None and st.session_state.enforcement_dfs:
+    if st.session_state.constituents_df is not None and st.session_state.combined_enforcement_df is not None:
         st.session_state.data_loaded = True
-        # Combine all enforcement data into a single DataFrame for easier processing
-        st.session_state.combined_enforcement_df = pd.concat(st.session_state.enforcement_dfs.values(), ignore_index=True)
         st.markdown(f'<div class="success-banner">🎉 Data Loaded! Total {len(st.session_state.combined_enforcement_df):,} enforcement records ready. Proceed to Step 2.</div>', unsafe_allow_html=True)
 
 
@@ -223,57 +224,51 @@ with tab1:
 with tab2:
     if not st.session_state.data_loaded:
         st.warning("⚠️ Please upload both Constituents and Enforcement data in Step 1.")
-        st.stop()
-    
-    st.header("Configure Matching Parameters")
+    else:
+        # --- ALL TAB 2 LOGIC GOES HERE ---
+        st.header("Configure Matching Parameters")
 
-    # --- Column Selection (The Key New Feature) ---
-    st.subheader("1. Select Columns to Search for Company Names")
-    enforcement_cols = st.session_state.combined_enforcement_df.columns.tolist()
-    # Suggest columns that are likely to contain company names
-    suggested_cols = [c for c in enforcement_cols if any(keyword in c.lower() for keyword in ['name', 'company', 'entity', 'organization', 'respondent', 'firm'])]
-    
-    selected_cols = st.multiselect(
-        "From your enforcement files, select all columns that might contain company names.",
-        options=enforcement_cols,
-        default=suggested_cols,
-        help="The tool will search for matches ONLY in these columns. This makes it faster and more precise."
-    )
-
-    # --- Other Configurations ---
-    st.subheader("2. Set Matching Threshold")
-    match_threshold = st.slider("Fuzzy Match Threshold (%)", 50, 100, 80, help="Higher values require a closer match.")
-
-    if not selected_cols:
-        st.warning("Please select at least one column to search for company names.")
-        st.stop()
+        st.subheader("1. Select Columns to Search for Company Names")
+        enforcement_cols = st.session_state.combined_enforcement_df.columns.tolist()
+        suggested_cols = [c for c in enforcement_cols if any(keyword in c.lower() for keyword in ['name', 'company', 'entity', 'organization', 'respondent', 'firm'])]
         
-    st.markdown("---")
-    
-    # --- Execute Matching ---
-    if st.button("🚀 Run Company Matching", type="primary", use_container_width=True):
-        with st.spinner("Performing high-speed matching... This may take a moment for large datasets."):
-            try:
-                # Use hash of the dataframe to ensure caching works correctly with mutable objects
-                enforcement_df_hash = pd.util.hash_pandas_object(st.session_state.combined_enforcement_df).sum()
-                
-                matched_df = perform_fuzzy_matching(
-                    enforcement_df_hash,
-                    st.session_state.combined_enforcement_df,
-                    st.session_state.constituents_df,
-                    selected_cols,
-                    match_threshold
-                )
-                st.session_state.matched_df = matched_df
-                st.session_state.matching_complete = True
-                st.balloons()
-                st.success("✅ Matching Complete!")
+        selected_cols = st.multiselect(
+            "From your enforcement files, select all columns that might contain company names.",
+            options=enforcement_cols,
+            default=suggested_cols,
+            help="The tool will search for matches ONLY in these columns. This makes it faster and more precise."
+        )
 
-            except Exception as e:
-                st.error(f"An error occurred during matching: {e}")
-                st.stop()
-    
-    # --- Display Matching Results ---
+        st.subheader("2. Set Matching Threshold")
+        match_threshold = st.slider("Fuzzy Match Threshold (%)", 50, 100, 80, help="Higher values require a closer match.")
+
+        st.markdown("---")
+        
+        if not selected_cols:
+            st.warning("Please select at least one column to search for company names before running the match.")
+        else:
+            if st.button("🚀 Run Company Matching", type="primary", use_container_width=True):
+                with st.spinner("Performing high-speed matching... This may take a moment for large datasets."):
+                    try:
+                        enforcement_df_hash = pd.util.hash_pandas_object(st.session_state.combined_enforcement_df, index=True).sum()
+                        
+                        matched_df = perform_fuzzy_matching(
+                            enforcement_df_hash,
+                            st.session_state.combined_enforcement_df,
+                            st.session_state.constituents_df,
+                            selected_cols,
+                            match_threshold
+                        )
+                        st.session_state.matched_df = matched_df
+                        st.session_state.matching_complete = True
+                        st.balloons()
+                        st.success("✅ Matching Complete!")
+
+                    except Exception as e:
+                        st.error(f"An error occurred during matching: {e}")
+                        st.exception(e) # This will print the full traceback for debugging
+
+    # --- Display Matching Results (outside the button click, but inside the 'else' block) ---
     if st.session_state.matching_complete:
         matched_df = st.session_state.matched_df
         num_matched = matched_df['Matched Constituent Symbol'].notna().sum()
@@ -295,7 +290,6 @@ with tab2:
             st.info("This chart shows which of your selected columns produced the most matches.")
             source_counts = matched_df['Source Column'].value_counts()
             st.bar_chart(source_counts)
-            
         else:
             st.warning("No matches were found. Try lowering the match threshold or selecting different columns.")
 
@@ -305,74 +299,70 @@ with tab2:
 with tab3:
     if not st.session_state.matching_complete:
         st.warning("⚠️ Please run the matching process in Step 2 first.")
-        st.stop()
+    else:
+        # --- ALL TAB 3 LOGIC GOES HERE ---
+        st.header("Generate Index and Download Results")
         
-    st.header("Generate Index and Download Results")
-    
-    # --- Index Calculation Configuration ---
-    st.subheader("1. Configure Index Calculation")
-    col1, col2 = st.columns(2)
-    with col1:
-        calculation_method = st.selectbox(
-            "Index Calculation Method",
-            ['Count Enforcements', 'Sum Fines', 'Average Fines', 'Max Fine'],
-            key='calc_method'
-        )
-    with col2:
-        if calculation_method == 'Count Enforcements':
-            score_multiplier = st.number_input("Score Multiplier", 0.1, 10.0, 1.0, 0.1)
-            fine_column = None
-        else:
-            # Detect potential fine columns
-            numeric_cols = st.session_state.matched_df.select_dtypes(include='number').columns.tolist()
-            potential_fine_cols = [c for c in numeric_cols if any(kw in c.lower() for kw in ['fine', 'penalty', 'amount', 'sanction'])]
-            fine_column = st.selectbox(
-                "Select the Fine/Penalty Column",
-                options=st.session_state.matched_df.columns,
-                index=st.session_state.matched_df.columns.get_loc(potential_fine_cols[0]) if potential_fine_cols else 0
+        st.subheader("1. Configure Index Calculation")
+        col1, col2 = st.columns(2)
+        with col1:
+            calculation_method = st.selectbox(
+                "Index Calculation Method",
+                ['Count Enforcements', 'Sum Fines', 'Average Fines', 'Max Fine'],
+                key='calc_method'
             )
-            score_multiplier = 1.0
-    
-    # --- Execute Calculation ---
-    if st.button("📊 Calculate Enforcement Index", type="primary", use_container_width=True):
-        with st.spinner("Calculating scores and ranking..."):
-            valid_matches = st.session_state.matched_df.dropna(subset=['Matched Constituent Symbol']).copy()
-            if valid_matches.empty:
-                st.error("No valid matches found to calculate an index.")
-                st.stop()
+        with col2:
+            if calculation_method == 'Count Enforcements':
+                score_multiplier = st.number_input("Score Multiplier", 0.1, 10.0, 1.0, 0.1)
+                fine_column = None
+            else:
+                numeric_cols = st.session_state.matched_df.select_dtypes(include='number').columns.tolist()
+                potential_fine_cols = [c for c in numeric_cols if any(kw in c.lower() for kw in ['fine', 'penalty', 'amount', 'sanction'])]
+                
+                # Set a default index if potential columns are found, otherwise default to first column
+                default_index = st.session_state.matched_df.columns.get_loc(potential_fine_cols[0]) if potential_fine_cols else 0
 
-            # Use hash for caching
-            matched_df_hash = pd.util.hash_pandas_object(valid_matches).sum()
-            
-            scores = calculate_enforcement_score(
-                matched_df_hash,
-                valid_matches,
-                calculation_method,
-                score_multiplier,
-                fine_column
-            )
-            
-            final_df = st.session_state.constituents_df.copy()
-            final_df = final_df.set_index('Symbol')
-            final_df['Enforcement Score'] = scores
-            final_df['Enforcement Score'].fillna(0, inplace=True)
-            
-            # Add summary stats
-            final_df['Total Enforcements'] = valid_matches.groupby('Matched Constituent Symbol').size()
-            final_df['Total Enforcements'].fillna(0, inplace=True)
+                fine_column = st.selectbox(
+                    "Select the Fine/Penalty Column",
+                    options=st.session_state.matched_df.columns,
+                    index=default_index
+                )
+                score_multiplier = 1.0
+        
+        if st.button("📊 Calculate Enforcement Index", type="primary", use_container_width=True):
+            with st.spinner("Calculating scores and ranking..."):
+                valid_matches = st.session_state.matched_df.dropna(subset=['Matched Constituent Symbol']).copy()
+                if valid_matches.empty:
+                    st.error("No valid matches found to calculate an index.")
+                else:
+                    matched_df_hash = pd.util.hash_pandas_object(valid_matches, index=True).sum()
+                    
+                    scores = calculate_enforcement_score(
+                        matched_df_hash,
+                        valid_matches,
+                        calculation_method,
+                        score_multiplier,
+                        fine_column
+                    )
+                    
+                    final_df = st.session_state.constituents_df.copy()
+                    final_df = final_df.set_index('Symbol')
+                    final_df['Enforcement Score'] = scores
+                    final_df['Enforcement Score'].fillna(0, inplace=True)
+                    
+                    final_df['Total Enforcements'] = valid_matches.groupby('Matched Constituent Symbol').size()
+                    final_df['Total Enforcements'].fillna(0, inplace=True)
 
-            final_df = final_df.sort_values(by='Enforcement Score', ascending=False).reset_index()
-            final_df['Rank'] = range(1, len(final_df) + 1)
-            
-            # Reorder columns for clarity
-            cols_order = ['Rank', 'Symbol', 'Name', 'Sector', 'Enforcement Score', 'Total Enforcements']
-            final_df = final_df[cols_order + [c for c in final_df.columns if c not in cols_order]]
+                    final_df = final_df.sort_values(by='Enforcement Score', ascending=False).reset_index()
+                    final_df['Rank'] = range(1, len(final_df) + 1)
+                    
+                    cols_order = ['Rank', 'Symbol', 'Name', 'Sector', 'Enforcement Score', 'Total Enforcements']
+                    final_df = final_df[cols_order + [c for c in final_df.columns if c not in cols_order]]
 
-            st.session_state.final_ranked_df = final_df
-            st.session_state.index_calculated = True
-            st.success("✅ Index Calculation Complete!")
+                    st.session_state.final_ranked_df = final_df
+                    st.session_state.index_calculated = True
+                    st.success("✅ Index Calculation Complete!")
             
-    # --- Display Final Results & Download ---
     if st.session_state.index_calculated:
         final_df = st.session_state.final_ranked_df
         st.subheader("🏆 Final Ranked Index")
@@ -387,7 +377,6 @@ with tab3:
             detailed_csv = st.session_state.matched_df.to_csv(index=False).encode('utf-8')
             st.download_button("Download Detailed Matches (CSV)", detailed_csv, "detailed_matches.csv", "text/csv", use_container_width=True)
         
-        # ZIP Package
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("ranked_index.csv", ranked_csv)
