@@ -8,7 +8,7 @@ import time
 # --- Page Configuration ---
 st.set_page_config(layout="wide", page_title="Enforcement Index Portal")
 
-# --- Caching & Core Logic (Rewritten for Speed & Precision) ---
+# --- Caching & Core Logic ---
 
 @st.cache_data
 def load_and_prepare_df(file_content: bytes) -> pd.DataFrame:
@@ -17,7 +17,7 @@ def load_and_prepare_df(file_content: bytes) -> pd.DataFrame:
 
 @st.cache_data
 def perform_fuzzy_matching(
-    _enforcement_df_hash: int,  # Add hash to bust cache when df changes
+    _enforcement_df_hash: int,
     enforcement_df: pd.DataFrame,
     constituents_df: pd.DataFrame,
     enforcement_cols_to_search: list[str],
@@ -26,18 +26,16 @@ def perform_fuzzy_matching(
     """
     Performs optimized fuzzy matching on user-selected columns.
     """
-    # 1. Prepare constituents data for fast lookups
+    # This function now expects a pre-cleaned constituents_df
     constituent_names = constituents_df['Name'].dropna().astype(str).str.strip().tolist()
     name_to_info = constituents_df.set_index('Name')[['Symbol', 'Sector']].to_dict('index')
 
-    # Initialize results DataFrame to store the best match for each row
     results_df = pd.DataFrame(index=enforcement_df.index)
     results_df['Best Match Name'] = None
     results_df['Match Score'] = 0.0
     results_df['Source Column'] = None
     results_df['Source Value'] = None
 
-    # 2. Iterate through ONLY the user-selected columns
     progress_bar = st.progress(0, text="Starting matching process...")
     total_cols = len(enforcement_cols_to_search)
 
@@ -45,16 +43,13 @@ def perform_fuzzy_matching(
         progress_text = f"Analyzing column '{col_name}' ({i+1}/{total_cols})..."
         progress_bar.progress((i) / total_cols, text=progress_text)
 
-        # 3. Get unique non-empty values from the column to avoid re-matching
         unique_values = enforcement_df[col_name].dropna().astype(str).str.strip().unique()
-        unique_values = [val for val in unique_values if len(val) > 2] # Filter out short strings
+        unique_values = [val for val in unique_values if len(val) > 2]
 
         if not list(unique_values):
             continue
 
-        # 4. Create a match map for these unique values
         match_map = {}
-        # Use extract over extractOne for potential bulk improvements later, but process one by one for now
         for val in unique_values:
             match = process.extractOne(
                 val, constituent_names, scorer=fuzz.token_sort_ratio, score_cutoff=match_threshold
@@ -65,21 +60,18 @@ def perform_fuzzy_matching(
         if not match_map:
             continue
 
-        # 5. Apply the matches back to the column
         col_series = enforcement_df[col_name].astype(str).str.strip()
         col_matches = col_series.map(match_map).dropna()
 
         if col_matches.empty:
             continue
             
-        # 6. Update the main results if the current column provides a better match
         temp_df = pd.DataFrame(col_matches.tolist(), index=col_matches.index)
         temp_df['source_column'] = col_name
         temp_df['source_value'] = enforcement_df.loc[col_matches.index, col_name]
 
         is_better_match = temp_df['score'] > results_df.loc[temp_df.index, 'Match Score'].fillna(0)
         
-        # Update only those rows
         results_df.loc[temp_df.index[is_better_match], 'Best Match Name'] = temp_df.loc[is_better_match, 'match_name']
         results_df.loc[temp_df.index[is_better_match], 'Match Score'] = temp_df.loc[is_better_match, 'score']
         results_df.loc[temp_df.index[is_better_match], 'Source Column'] = temp_df.loc[is_better_match, 'source_column']
@@ -87,11 +79,9 @@ def perform_fuzzy_matching(
 
     progress_bar.progress(1.0, text="Finalizing results...")
     
-    # 7. Add Symbol and Sector from the best match
     results_df['Matched Constituent Symbol'] = results_df['Best Match Name'].map(lambda x: name_to_info.get(x, {}).get('Symbol') if pd.notna(x) else None)
     results_df['Matched Constituent Sector'] = results_df['Best Match Name'].map(lambda x: name_to_info.get(x, {}).get('Sector') if pd.notna(x) else None)
 
-    # 8. Combine original data with matching results
     final_df = pd.concat([enforcement_df, results_df], axis=1)
 
     progress_bar.empty()
@@ -183,11 +173,38 @@ with tab1:
                     st.error(f"Constituents file is missing required columns. It must contain: {', '.join(required)}")
                     st.session_state.constituents_df = None
                 else:
+                    # ======================= ROBUST FIX HERE =======================
+                    # Handle potential NaN values in the 'Name' column and ensure it's a string
+                    df.dropna(subset=['Name'], inplace=True)
+                    df['Name'] = df['Name'].astype(str)
+
+                    original_len = len(df)
+                    
+                    # Create a temporary key for de-duplication that is case and whitespace insensitive
+                    df['temp_dedup_key'] = df['Name'].str.strip().str.lower()
+                    
+                    # Drop duplicates based on this normalized key, keeping the first instance
+                    df.drop_duplicates(subset=['temp_dedup_key'], keep='first', inplace=True)
+                    
+                    # Remove the temporary key column
+                    df.drop(columns=['temp_dedup_key'], inplace=True)
+                    
+                    cleaned_len = len(df)
+
+                    if original_len > cleaned_len:
+                        num_removed = original_len - cleaned_len
+                        st.warning(
+                            f"⚠️ Found and removed {num_removed} duplicate company names "
+                            f"(checked case and whitespace-insensitively). This is necessary for matching."
+                        )
+                    # ===================== END OF FIX =======================
+
                     st.session_state.constituents_df = df
-                    st.success(f"✅ Loaded {len(df):,} constituent companies.")
+                    st.success(f"✅ Loaded and prepared {len(df):,} unique constituent companies.")
                     st.dataframe(df[required].head(), use_container_width=True)
             except Exception as e:
                 st.error(f"Error loading constituents file: {e}")
+                st.exception(e) # Show full traceback for debugging
 
     with col2:
         st.subheader("B) Enforcement Data Files (CSV)")
@@ -207,25 +224,23 @@ with tab1:
                     has_error = True
             
             if not has_error and st.session_state.enforcement_dfs:
-                 # Combine all enforcement data into a single DataFrame
                 st.session_state.combined_enforcement_df = pd.concat(
                     st.session_state.enforcement_dfs.values(), ignore_index=True
                 )
     
-    # Check if both sets of data are loaded to proceed
     if st.session_state.constituents_df is not None and st.session_state.combined_enforcement_df is not None:
         st.session_state.data_loaded = True
         st.markdown(f'<div class="success-banner">🎉 Data Loaded! Total {len(st.session_state.combined_enforcement_df):,} enforcement records ready. Proceed to Step 2.</div>', unsafe_allow_html=True)
 
 
 # ==============================================================================
-# TAB 2: CONFIGURE & MATCH
+# TAB 2 & 3 (No changes needed below this line)
 # ==============================================================================
+
 with tab2:
     if not st.session_state.data_loaded:
         st.warning("⚠️ Please upload both Constituents and Enforcement data in Step 1.")
     else:
-        # --- ALL TAB 2 LOGIC GOES HERE ---
         st.header("Configure Matching Parameters")
 
         st.subheader("1. Select Columns to Search for Company Names")
@@ -266,9 +281,8 @@ with tab2:
 
                     except Exception as e:
                         st.error(f"An error occurred during matching: {e}")
-                        st.exception(e) # This will print the full traceback for debugging
+                        st.exception(e)
 
-    # --- Display Matching Results (outside the button click, but inside the 'else' block) ---
     if st.session_state.matching_complete:
         matched_df = st.session_state.matched_df
         num_matched = matched_df['Matched Constituent Symbol'].notna().sum()
@@ -293,14 +307,10 @@ with tab2:
         else:
             st.warning("No matches were found. Try lowering the match threshold or selecting different columns.")
 
-# ==============================================================================
-# TAB 3: GENERATE & DOWNLOAD
-# ==============================================================================
 with tab3:
     if not st.session_state.matching_complete:
         st.warning("⚠️ Please run the matching process in Step 2 first.")
     else:
-        # --- ALL TAB 3 LOGIC GOES HERE ---
         st.header("Generate Index and Download Results")
         
         st.subheader("1. Configure Index Calculation")
@@ -318,10 +328,7 @@ with tab3:
             else:
                 numeric_cols = st.session_state.matched_df.select_dtypes(include='number').columns.tolist()
                 potential_fine_cols = [c for c in numeric_cols if any(kw in c.lower() for kw in ['fine', 'penalty', 'amount', 'sanction'])]
-                
-                # Set a default index if potential columns are found, otherwise default to first column
                 default_index = st.session_state.matched_df.columns.get_loc(potential_fine_cols[0]) if potential_fine_cols else 0
-
                 fine_column = st.selectbox(
                     "Select the Fine/Penalty Column",
                     options=st.session_state.matched_df.columns,
@@ -336,13 +343,8 @@ with tab3:
                     st.error("No valid matches found to calculate an index.")
                 else:
                     matched_df_hash = pd.util.hash_pandas_object(valid_matches, index=True).sum()
-                    
                     scores = calculate_enforcement_score(
-                        matched_df_hash,
-                        valid_matches,
-                        calculation_method,
-                        score_multiplier,
-                        fine_column
+                        matched_df_hash, valid_matches, calculation_method, score_multiplier, fine_column
                     )
                     
                     final_df = st.session_state.constituents_df.copy()
