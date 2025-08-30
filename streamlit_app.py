@@ -653,4 +653,4 @@ if st.session_state.data_loaded:
             # Show match rate
             total_count = len(st.session_state.matched_enforcement_df)
             match_rate = (matched_count / total_count) * 100
-            st.metric("Match Rate", f"{match_rate:.1f}%
+            st.metric("Match Rate", f"{match_rate:.1f}%)
