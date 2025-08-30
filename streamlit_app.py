@@ -19,8 +19,8 @@ def load_csv_file(file_content: bytes, filename: str) -> pd.DataFrame:
 
 @st.cache_data
 def fuzzy_match_companies_cached(enforcement_data: str, constituents_data: str, 
-                                match_threshold: int = 75, company_col: str = "Company Name") -> str:
-    """Cached fuzzy matching with serialized DataFrames - matches only on Name column"""
+                                match_threshold: int = 75) -> str:
+    """Cached fuzzy matching with serialized DataFrames - searches all enforcement columns"""
     # Deserialize DataFrames
     enforcement_df = pd.read_json(StringIO(enforcement_data))
     constituents_df = pd.read_json(StringIO(constituents_data))
@@ -30,19 +30,6 @@ def fuzzy_match_companies_cached(enforcement_data: str, constituents_data: str,
     missing_cols = [col for col in required_cols if col not in constituents_df.columns]
     if missing_cols:
         raise ValueError(f"Constituents file missing required columns: {missing_cols}")
-    
-    # Ensure company name column exists in enforcement data
-    if company_col not in enforcement_df.columns:
-        # Try to find the best column
-        potential_cols = [col for col in enforcement_df.columns 
-                         if any(keyword in col.lower() for keyword in ['company', 'name', 'entity', 'firm', 'organization'])]
-        if potential_cols:
-            company_col = potential_cols[0]
-            enforcement_df.rename(columns={company_col: 'Company Name'}, inplace=True)
-        else:
-            raise ValueError("No suitable company name column found in enforcement data")
-    elif company_col != 'Company Name':
-        enforcement_df.rename(columns={company_col: 'Company Name'}, inplace=True)
     
     # Prepare constituent names list for faster matching - ONLY use Name column
     constituent_names = constituents_df['Name'].dropna().astype(str).str.strip().tolist()
@@ -57,13 +44,8 @@ def fuzzy_match_companies_cached(enforcement_data: str, constituents_data: str,
             'Country': row.get('Country', '')  # Keep Country if available
         }
     
-    # Pre-allocate results for better performance
+    # Search all enforcement columns for company matches
     results = []
-    
-    # Vectorized operations where possible
-    enforcement_df['Company Name'] = enforcement_df['Company Name'].fillna('').astype(str).str.strip()
-    
-    # Batch process for better performance
     batch_size = 100
     total_rows = len(enforcement_df)
     
@@ -73,37 +55,49 @@ def fuzzy_match_companies_cached(enforcement_data: str, constituents_data: str,
         
         batch_results = []
         for _, row in batch_df.iterrows():
-            company_name = row['Company Name']
+            best_match = None
+            best_score = 0
+            best_source_column = None
+            best_source_value = None
             
-            if not company_name:
+            # Search through ALL columns in the enforcement row
+            for column_name, cell_value in row.items():
+                if pd.isna(cell_value):
+                    continue
+                    
+                cell_str = str(cell_value).strip()
+                if not cell_str or len(cell_str) < 2:  # Skip very short strings
+                    continue
+                
+                # Perform fuzzy matching on this cell value
+                matches = process.extractOne(cell_str, constituent_names, 
+                                           scorer=fuzz.token_sort_ratio, score_cutoff=match_threshold)
+                
+                if matches and matches[1] > best_score:
+                    best_match = matches[0]
+                    best_score = matches[1]
+                    best_source_column = column_name
+                    best_source_value = cell_str
+            
+            # Store the best match found across all columns
+            if best_match:
+                matched_info = name_to_info[best_match]
                 batch_results.append({
-                    'Best Match Name': None, 
-                    'Match Score': 0,
-                    'Matched Constituent Symbol': None, 
-                    'Matched Constituent Sector': None,
-                    'Matched Constituent Country': None
-                })
-                continue
-            
-            # Perform fuzzy matching only on constituent Names
-            matches = process.extractOne(company_name, constituent_names, 
-                                       scorer=fuzz.token_sort_ratio, score_cutoff=match_threshold)
-            
-            if matches:
-                matched_name, score = matches
-                matched_info = name_to_info[matched_name]
-                batch_results.append({
-                    'Best Match Name': matched_name, 
-                    'Match Score': score,
+                    'Best Match Name': best_match,
+                    'Match Score': best_score,
+                    'Source Column': best_source_column,
+                    'Source Value': best_source_value,
                     'Matched Constituent Symbol': matched_info['Symbol'],
                     'Matched Constituent Sector': matched_info['Sector'],
                     'Matched Constituent Country': matched_info['Country']
                 })
             else:
                 batch_results.append({
-                    'Best Match Name': None, 
+                    'Best Match Name': None,
                     'Match Score': 0,
-                    'Matched Constituent Symbol': None, 
+                    'Source Column': None,
+                    'Source Value': None,
+                    'Matched Constituent Symbol': None,
                     'Matched Constituent Sector': None,
                     'Matched Constituent Country': None
                 })
@@ -119,25 +113,23 @@ def fuzzy_match_companies_cached(enforcement_data: str, constituents_data: str,
 
 @st.cache_data
 def calculate_enforcement_score_cached(grouped_data: str, calculation_method: str, 
-                                     score_multiplier: float = 1.0) -> str:
+                                     score_multiplier: float = 1.0, fine_column: str = None) -> str:
     """Cached enforcement score calculation"""
     # Deserialize grouped data
     grouped_df = pd.read_json(StringIO(grouped_data))
     
     if calculation_method == 'Count Enforcements':
         scores = grouped_df.groupby('Matched Constituent Symbol').size() * score_multiplier
-    elif calculation_method == 'Sum Fines':
-        if 'Fine Amount' not in grouped_df.columns:
-            raise ValueError("'Fine Amount' column required for Sum Fines method")
-        scores = grouped_df.groupby('Matched Constituent Symbol')['Fine Amount'].sum()
-    elif calculation_method == 'Average Fines':
-        if 'Fine Amount' not in grouped_df.columns:
-            raise ValueError("'Fine Amount' column required for Average Fines method")
-        scores = grouped_df.groupby('Matched Constituent Symbol')['Fine Amount'].mean()
-    elif calculation_method == 'Max Fine':
-        if 'Fine Amount' not in grouped_df.columns:
-            raise ValueError("'Fine Amount' column required for Max Fine method")
-        scores = grouped_df.groupby('Matched Constituent Symbol')['Fine Amount'].max()
+    elif calculation_method in ['Sum Fines', 'Average Fines', 'Max Fine']:
+        if not fine_column or fine_column not in grouped_df.columns:
+            raise ValueError(f"Fine column '{fine_column}' not found for {calculation_method} method")
+        
+        if calculation_method == 'Sum Fines':
+            scores = grouped_df.groupby('Matched Constituent Symbol')[fine_column].sum()
+        elif calculation_method == 'Average Fines':
+            scores = grouped_df.groupby('Matched Constituent Symbol')[fine_column].mean()
+        else:  # Max Fine
+            scores = grouped_df.groupby('Matched Constituent Symbol')[fine_column].max()
     else:
         scores = grouped_df.groupby('Matched Constituent Symbol').size() * score_multiplier
     
@@ -192,6 +184,10 @@ st.markdown("""
         background: #e0f2fe; padding: 1rem; border-radius: 0.5rem;
         border-left: 4px solid #0277bd; margin: 1rem 0;
     }
+    .warning-box {
+        background: #fff3cd; padding: 1rem; border-radius: 0.5rem;
+        border-left: 4px solid #ffc107; margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -201,8 +197,8 @@ st.markdown("**Optimized for Speed** - Upload your data and generate enforcement
 # Important matching info
 st.markdown("""
 <div class="info-box">
-<strong>📋 Matching Logic:</strong> Companies are matched using fuzzy search on the <strong>Name</strong> column from your constituents file. 
-Output includes <strong>Symbol</strong>, <strong>Name</strong>, and <strong>Sector</strong> from matched constituents.
+<strong>🔍 Universal Matching Logic:</strong> The system searches <strong>ALL columns</strong> in your enforcement files for company matches against the <strong>Name</strong> column from constituents. 
+No need to specify company columns - it finds them automatically! Output includes <strong>Symbol</strong>, <strong>Name</strong>, and <strong>Sector</strong>.
 </div>
 """, unsafe_allow_html=True)
 
@@ -265,15 +261,19 @@ with tab1:
                         st.metric("Companies", len(df))
                         st.dataframe(df[display_cols].head(), use_container_width=True)
                         
-                        # Show column info
-                        st.info(f"Matching will be performed on **Name** column. Output will include **Symbol**, **Name**, and **Sector**.")
+                        # Show matching info
+                        st.markdown("""
+                        <div class="warning-box">
+                        <strong>🎯 Matching Target:</strong> System will search for these company names across ALL columns in enforcement files.
+                        </div>
+                        """, unsafe_allow_html=True)
                         
                 except Exception as e:
                     st.error(f"❌ Error loading file: {e}")
     
     with col2:
         st.subheader("Enforcement Data (CSV)")
-        st.info("Files should contain company names for matching. Fine amounts optional for advanced scoring.")
+        st.info("**Any format accepted!** System searches ALL columns automatically for company matches.")
         uploaded_enforcement = st.file_uploader(
             "Upload enforcement files (can be multiple)",
             type=["csv"], accept_multiple_files=True, key="enforcement"
@@ -282,6 +282,7 @@ with tab1:
         if uploaded_enforcement:
             new_files = {}
             total_records = 0
+            all_columns = set()
             
             for file in uploaded_enforcement:
                 file_hash = hash(file.read())
@@ -293,13 +294,8 @@ with tab1:
                         new_files[file.name] = df
                         st.session_state.enforcement_file_hashes[file.name] = file_hash
                         total_records += len(df)
-                        st.success(f"✅ {file.name}: {len(df):,} records")
-                        
-                        # Show company name columns detected
-                        company_cols = [col for col in df.columns 
-                                      if any(term in col.lower() for term in ['company', 'name', 'entity', 'firm'])]
-                        if company_cols:
-                            st.info(f"Company columns detected: {', '.join(company_cols[:3])}")
+                        all_columns.update(df.columns.tolist())
+                        st.success(f"✅ {file.name}: {len(df):,} records, {len(df.columns)} columns")
                         
                     except Exception as e:
                         st.error(f"❌ Error in {file.name}: {e}")
@@ -307,6 +303,13 @@ with tab1:
             if new_files:
                 st.session_state.enforcement_raw_dfs.update(new_files)
                 st.metric("Total Enforcement Records", f"{total_records:,}")
+                st.metric("Total Unique Columns", len(all_columns))
+                
+                # Show sample columns
+                sample_cols = list(all_columns)[:10]
+                if len(all_columns) > 10:
+                    sample_cols.append(f"... and {len(all_columns)-10} more")
+                st.info(f"**Columns to search:** {', '.join(sample_cols)}")
     
     # Auto-detect data loading completion
     if (st.session_state.constituents_df is not None and 
@@ -314,7 +317,7 @@ with tab1:
         if not st.session_state.data_loaded:
             st.session_state.data_loaded = True
             st.balloons()
-            st.markdown('<div class="success-banner">🎉 Data Loading Complete! Ready for matching.</div>', 
+            st.markdown('<div class="success-banner">🎉 Data Loading Complete! Ready for universal matching.</div>', 
                        unsafe_allow_html=True)
 
 with tab2:
@@ -331,15 +334,15 @@ with tab2:
         match_threshold = st.slider(
             "Fuzzy Match Threshold", 50, 100, 
             st.session_state.match_threshold, key="threshold",
-            help="Higher values = stricter matching"
+            help="Higher values = stricter matching. System searches ALL columns automatically."
         )
         st.session_state.match_threshold = match_threshold
     
     with config_col2:
-        # Auto-detect fine columns
+        # Auto-detect fine columns from all enforcement data
         all_enforcement = pd.concat(st.session_state.enforcement_raw_dfs.values(), ignore_index=True)
         fine_cols = [col for col in all_enforcement.columns 
-                    if any(term in col.lower() for term in ['fine', 'penalty', 'amount', 'sanction', 'settlement'])]
+                    if any(term in col.lower() for term in ['fine', 'penalty', 'amount', 'sanction', 'settlement', 'monetary', 'payment', 'fee'])]
         
         calculation_method = st.selectbox(
             "Calculation Method",
@@ -361,57 +364,53 @@ with tab2:
         
         if calculation_method in ['Sum Fines', 'Average Fines', 'Max Fine']:
             if fine_cols:
-                fine_col = st.selectbox("Fine Amount Column", fine_cols)
+                fine_col = st.selectbox("Fine Amount Column", fine_cols,
+                                       help="Select column containing monetary amounts")
                 st.session_state.fine_amount_column = fine_col
             else:
-                st.warning("⚠️ No fine columns detected. Switch to 'Count Enforcements' method.")
+                st.warning("⚠️ No monetary columns detected. Switch to 'Count Enforcements' method.")
                 st.session_state.fine_amount_column = None
     
     st.markdown("---")
     
-    # Preview constituent data structure
-    if st.session_state.constituents_df is not None:
-        st.subheader("📋 Constituent Data Preview")
-        display_cols = ['Name', 'Symbol', 'Sector']
-        if 'Country' in st.session_state.constituents_df.columns:
-            display_cols.append('Country')
-        st.dataframe(st.session_state.constituents_df[display_cols].head(), use_container_width=True)
+    # Preview data structures
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.session_state.constituents_df is not None:
+            st.subheader("📋 Constituent Names (Search Targets)")
+            display_cols = ['Name', 'Symbol', 'Sector']
+            if 'Country' in st.session_state.constituents_df.columns:
+                display_cols.append('Country')
+            st.dataframe(st.session_state.constituents_df[display_cols].head(), use_container_width=True)
+    
+    with col2:
+        if st.session_state.enforcement_raw_dfs:
+            st.subheader("🔍 Enforcement Data (All Columns Searched)")
+            sample_df = next(iter(st.session_state.enforcement_raw_dfs.values()))
+            st.dataframe(sample_df.head(3), use_container_width=True)
+            st.caption(f"Showing sample from first file. All {len(sample_df.columns)} columns will be searched.")
     
     # One-click matching
-    if st.button("🚀 Execute Fuzzy Matching", type="primary", use_container_width=True):
-        with st.spinner("Performing fuzzy matching on Name column..."):
+    if st.button("🚀 Execute Universal Fuzzy Matching", type="primary", use_container_width=True):
+        with st.spinner("Searching ALL enforcement columns for company matches..."):
             try:
                 # Prepare data
                 all_enforcement = pd.concat(st.session_state.enforcement_raw_dfs.values(), ignore_index=True)
                 
-                # Handle fine amount column
+                # Handle fine amount column if specified
                 if (st.session_state.fine_amount_column and 
                     st.session_state.fine_amount_column in all_enforcement.columns):
                     all_enforcement = all_enforcement.copy()
-                    all_enforcement.rename(columns={
-                        st.session_state.fine_amount_column: 'Fine Amount'
-                    }, inplace=True)
+                    # Keep original column and create a normalized 'Fine Amount' column
                     all_enforcement['Fine Amount'] = pd.to_numeric(
-                        all_enforcement['Fine Amount'], errors='coerce'
+                        all_enforcement[st.session_state.fine_amount_column], errors='coerce'
                     ).fillna(0)
                 
-                # Find company column
-                company_col = None
-                for col in all_enforcement.columns:
-                    if any(term in col.lower() for term in ['company', 'name', 'entity', 'firm', 'organization']):
-                        company_col = col
-                        break
-                
-                if not company_col:
-                    st.error("❌ No company name column found in enforcement data")
-                    st.stop()
-                
-                # Perform cached matching
+                # Perform universal matching (searches all columns automatically)
                 matched_json = fuzzy_match_companies_cached(
                     all_enforcement.to_json(),
                     st.session_state.constituents_df.to_json(),
-                    match_threshold,
-                    company_col
+                    match_threshold
                 )
                 
                 st.session_state.matched_enforcement_df = pd.read_json(StringIO(matched_json))
@@ -432,25 +431,31 @@ with tab2:
                 with result_col3:
                     st.metric("Match Rate", f"{match_rate:.1%}")
                 
-                st.success("✅ Matching completed!")
+                st.success("✅ Universal matching completed!")
                 
-                # Show matched results with Symbol, Name, Sector
+                # Show matched results with source information
                 if num_matched > 0:
-                    st.subheader("✅ Sample Matched Results")
+                    st.subheader("✅ Sample Matched Results (with Source Columns)")
                     match_preview = matched_df[matched_df['Matched Constituent Symbol'].notna()][
-                        ['Company Name', 'Best Match Name', 'Match Score', 'Matched Constituent Symbol', 'Matched Constituent Sector']
-                    ].head()
+                        ['Source Column', 'Source Value', 'Best Match Name', 'Match Score', 
+                         'Matched Constituent Symbol', 'Matched Constituent Sector']
+                    ].head(10)
                     st.dataframe(match_preview, use_container_width=True)
+                    
+                    # Show which columns provided matches
+                    source_columns = matched_df[matched_df['Matched Constituent Symbol'].notna()]['Source Column'].value_counts()
+                    st.subheader("📊 Matches by Source Column")
+                    st.dataframe(source_columns.reset_index(), use_container_width=True)
                 
                 # Show unmatched for review
                 if num_matched < total_records:
-                    st.subheader("❌ Top Unmatched Company Names")
+                    st.subheader("❌ Sample Unmatched Records")
                     unmatched = matched_df[matched_df['Matched Constituent Symbol'].isna()]
-                    unmatched_counts = unmatched['Company Name'].value_counts().head(10)
-                    st.dataframe(unmatched_counts.reset_index(), use_container_width=True)
+                    # Show a few sample unmatched records with their data
+                    st.dataframe(unmatched.head(5), use_container_width=True)
                 
             except Exception as e:
-                st.error(f"❌ Matching failed: {e}")
+                st.error(f"❌ Universal matching failed: {e}")
 
 with tab3:
     if not st.session_state.matching_complete:
@@ -476,7 +481,8 @@ with tab3:
                 scores_json = calculate_enforcement_score_cached(
                     valid_df.to_json(),
                     st.session_state.calculation_method,
-                    st.session_state.score_multiplier
+                    st.session_state.score_multiplier,
+                    st.session_state.fine_amount_column
                 )
                 
                 scores = pd.read_json(StringIO(scores_json), typ='series')
@@ -533,7 +539,7 @@ with tab3:
                 st.dataframe(top10_display, use_container_width=True)
                 
                 # Summary stats
-                stats_col1, stats_col2, stats_col3 = st.columns(3)
+                stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
                 with stats_col1:
                     companies_with_enforcements = (final_df['Total Enforcements'] > 0).sum()
                     st.metric("Companies with Enforcements", companies_with_enforcements)
@@ -543,6 +549,9 @@ with tab3:
                 with stats_col3:
                     total_enforcements = final_df['Total Enforcements'].sum()
                     st.metric("Total Enforcements", int(total_enforcements))
+                with stats_col4:
+                    avg_score = final_df[final_df['Enforcement Score'] > 0]['Enforcement Score'].mean()
+                    st.metric("Average Score", f"{avg_score:.2f}" if not pd.isna(avg_score) else "0")
                 
             except Exception as e:
                 st.error(f"❌ Index calculation failed: {e}")
@@ -584,11 +593,29 @@ with tab3:
                 zf.writestr("detailed_matching_results.csv", detailed_csv)
                 zf.writestr("original_constituents.csv", 
                            st.session_state.constituents_df.to_csv(index=False))
+                
+                # Add matching summary report
+                if st.session_state.matched_enforcement_df is not None:
+                    matched_df = st.session_state.matched_enforcement_df
+                    source_summary = matched_df[matched_df['Matched Constituent Symbol'].notna()]['Source Column'].value_counts()
+                    summary_report = f"""Universal Matching Summary Report
+=====================================
+
+Total Records Processed: {len(matched_df):,}
+Successfully Matched: {matched_df['Matched Constituent Symbol'].notna().sum():,}
+Match Rate: {(matched_df['Matched Constituent Symbol'].notna().sum() / len(matched_df) * 100):.1f}%
+
+Matches by Source Column:
+{source_summary.to_string()}
+
+Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+                    zf.writestr("matching_summary_report.txt", summary_report)
             
             st.download_button(
-                "Download ZIP Package",
+                "Download Complete Package with Reports",
                 zip_buffer.getvalue(),
-                "enforcement_index_complete.zip",
+                "enforcement_index_universal_matching.zip",
                 "application/zip"
             )
         
@@ -612,6 +639,12 @@ if st.session_state.data_loaded:
         if st.session_state.enforcement_raw_dfs:
             total_enforcement_records = sum(len(df) for df in st.session_state.enforcement_raw_dfs.values())
             st.metric("Enforcement Records", f"{total_enforcement_records:,}")
+            
+            # Show total columns being searched
+            all_cols = set()
+            for df in st.session_state.enforcement_raw_dfs.values():
+                all_cols.update(df.columns.tolist())
+            st.metric("Columns Searched", len(all_cols))
         
         if st.session_state.matching_complete:
             matched_count = st.session_state.matched_enforcement_df['Matched Constituent Symbol'].notna().sum()
@@ -620,8 +653,4 @@ if st.session_state.data_loaded:
             # Show match rate
             total_count = len(st.session_state.matched_enforcement_df)
             match_rate = (matched_count / total_count) * 100
-            st.metric("Match Rate", f"{match_rate:.1f}%")
-        
-        st.markdown("---")
-        st.markdown("*Matching on **Name** only*")
-        st.markdown("*Output: **Symbol**, **Name**, **Sector*** ⚡")
+            st.metric("Match Rate", f"{match_rate:.1f}%
